@@ -22,7 +22,7 @@ var file: std.fs.File = undefined;
 var read_buf: [4096]u8 = undefined;
 var path: []const u8 = undefined;
 var parser = zimdjson.dom.StreamParser(.default).init;
-var result = std.ArrayList(PartialTweet).init(allocator);
+var result: std.ArrayList(PartialTweet) = .empty;
 
 pub fn init(_path: []const u8) !void {
     path = _path;
@@ -35,10 +35,11 @@ pub fn prerun() !void {
 pub fn run() !void {
     file = try std.fs.openFileAbsolute(path, .{});
     try parser.expectDocumentSize(allocator, (try file.stat()).size);
-    const doc = try parser.parseFromReader(allocator, &file.reader(&read_buf).interface);
+    var file_reader = file.reader(&read_buf);
+    const doc = try parser.parseFromReader(allocator, &file_reader.interface);
     var statuses = (try doc.at("statuses").asArray()).iterator();
     while (statuses.next()) |tweet| {
-        try result.append(.{
+        try result.append(allocator, .{
             .created_at = try tweet.at("created_at").asString(),
             .id = try tweet.at("id").asUnsigned(),
             .result = try tweet.at("text").asString(),

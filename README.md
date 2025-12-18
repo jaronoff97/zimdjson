@@ -34,7 +34,7 @@ const std = @import("std");
 const zimdjson = @import("zimdjson");
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}).init;
+    var gpa: std.heap.GeneralPurposeAllocator(.{}) = .init;
     const allocator = gpa.allocator();
 
     var parser = zimdjson.ondemand.StreamParser(.default).init;
@@ -43,7 +43,9 @@ pub fn main() !void {
     const file = try std.fs.cwd().openFile("twitter.json", .{});
     defer file.close();
 
-    const document = try parser.parseFromReader(allocator, file.reader().any());
+    var read_buf: [4096]u8 = undefined;
+    var file_reader = file.reader(&read_buf);
+    const document = try parser.parseFromReader(allocator, &file_reader.interface);
 
     const metadata_count = try document.at("search_metadata").at("count").asUnsigned();
     std.debug.print("{} results.", .{metadata_count});
@@ -81,7 +83,7 @@ const Film = struct {
 };
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}).init;
+    var gpa: std.heap.GeneralPurposeAllocator(.{}) = .init;
     const allocator = gpa.allocator();
 
     var parser = zimdjson.ondemand.FullParser(.default).init;
