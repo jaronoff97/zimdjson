@@ -272,8 +272,8 @@ const power_of_ten: [20]u64 = brk: {
     break :brk res;
 };
 
-const RoundCallback = fn (*BiasedFp, u32, anytype) callconv(.Inline) void;
-const NearestCallback = fn (bool, bool, bool, anytype) callconv(.Inline) bool;
+const RoundCallback = *const fn (*BiasedFp, u32, anytype) callconv(.@"inline") void;
+const NearestCallback = *const fn (bool, bool, bool, anytype) callconv(.@"inline") bool;
 
 inline fn round(bf: *BiasedFp, callback: RoundCallback, args: anytype) void {
     const man_bits = common.man_bits;

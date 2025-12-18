@@ -21,6 +21,8 @@ pub fn Aligned(comptime aligned: bool) type {
         /// performance (benchmarking is recommended). To enforce the use of these instructions,
         /// the input must be properly aligned.
         pub const alignment = if (aligned) Vector.bytes_len else @alignOf(u8);
+        /// Alignment as std.mem.Alignment enum for use with ArrayListAlignedUnmanaged
+        pub const mem_alignment: ?std.mem.Alignment = if (aligned) @enumFromInt(@ctz(@as(usize, Vector.bytes_len))) else null;
         pub const slice = []align(alignment) const u8;
         pub const vector = *align(alignment) const @Vector(Vector.bytes_len, u8);
         pub const vectors = [Mask.computed_vectors]@This().vector;

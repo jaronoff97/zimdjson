@@ -231,7 +231,7 @@ pub fn Parser(comptime format: types.Format, comptime options: Options) type {
         pub const max_capacity_bound = if (want_stream) std.math.maxInt(usize) else std.math.maxInt(u32);
 
         // only used in full mode
-        document_buffer: std.ArrayListAlignedUnmanaged(u8, types.Aligned(true).alignment),
+        document_buffer: std.ArrayListAlignedUnmanaged(u8, types.Aligned(true).mem_alignment),
         reader_error: ?std.meta.Int(.unsigned, @bitSizeOf(anyerror)),
 
         string_buffer: types.StringBuffer(max_capacity_bound),
@@ -341,7 +341,7 @@ pub fn Parser(comptime format: types.Format, comptime options: Options) type {
         }
 
         /// Parse a JSON document from reader. Allocated resources are owned by the parser.
-        pub fn parseFromReader(self: *Self, allocator: Allocator, reader: std.io.AnyReader) (Error || ReaderError)!Document {
+        pub fn parseFromReader(self: *Self, allocator: Allocator, reader: *std.Io.Reader) (Error || ReaderError)!Document {
             if (builtin.mode == .Debug) {
                 try self.cursor.start_positions.ensureTotalCapacity(allocator, self.max_depth);
                 self.cursor.start_positions.expandToCapacity();
@@ -358,7 +358,7 @@ pub fn Parser(comptime format: types.Format, comptime options: Options) type {
                 common.readAllRetainingCapacity(
                     allocator,
                     reader,
-                    types.Aligned(true).alignment,
+                    types.Aligned(true).mem_alignment,
                     &self.document_buffer,
                     self.max_capacity,
                 ) catch |err| switch (err) {
@@ -2084,7 +2084,7 @@ pub fn Parser(comptime format: types.Format, comptime options: Options) type {
                         .parse = Custom.parse,
                     };
                 }
-                pub fn ArrayListAlignedUnmanaged(comptime T: type, comptime alignment: ?u29) CustomParser(_std.ArrayListAlignedUnmanaged(T, alignment)) {
+                pub fn ArrayListAlignedUnmanaged(comptime T: type, comptime alignment: ?_std.mem.Alignment) CustomParser(_std.ArrayListAlignedUnmanaged(T, alignment)) {
                     const Parsed = _std.ArrayListAlignedUnmanaged(T, alignment);
                     const Custom = struct {
                         pub const init: Parsed = .empty;
@@ -3375,12 +3375,12 @@ fn undefinedInit(comptime T: type) T {
 
 const StandardDataStructure = union(enum) {
     array_list: struct { type },
-    array_list_aligned: struct { type, ?u29 },
+    array_list_aligned: struct { type, ?std.mem.Alignment },
     // bit_stack,
     // buf_map,
     // buf_set,
     bounded_array: struct { type, usize },
-    bounded_array_aligned: struct { type, u29, usize },
+    bounded_array_aligned: struct { type, std.mem.Alignment, usize },
     enum_map: struct { type, type },
     singly_linked_list: struct { type },
     doubly_linked_list: struct { type },
@@ -3408,8 +3408,10 @@ const StandardDataStructure = union(enum) {
                         const child = info.child;
                         if (T == std.ArrayListUnmanaged(child))
                             return .{ .array_list = .{child} };
-                        if (T == std.ArrayListAlignedUnmanaged(child, info.alignment))
-                            return .{ .array_list_aligned = .{ child, info.alignment } };
+                        // Convert integer alignment to ?std.mem.Alignment enum
+                        const alignment: ?std.mem.Alignment = @enumFromInt(@ctz(@as(usize, info.alignment)));
+                        if (T == std.ArrayListAlignedUnmanaged(child, alignment))
+                            return .{ .array_list_aligned = .{ child, alignment } };
                     }
                 },
                 else => {},

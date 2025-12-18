@@ -8,6 +8,7 @@ var traced = TracedAllocator{ .wrapped = std.heap.c_allocator };
 const allocator = traced.allocator();
 
 var file: std.fs.File = undefined;
+var read_buf: [4096]u8 = undefined;
 var json: []const u8 = undefined;
 var doc: std.json.Parsed(Schema) = undefined;
 var parser = Parser.init;
@@ -21,7 +22,7 @@ pub fn prerun() !void {}
 pub fn run() !void {
     file = try std.fs.openFileAbsolute(json, .{});
     try parser.expectDocumentSize(allocator, (try file.stat()).size);
-    const document = try parser.parseFromReader(allocator, file.reader().any());
+    const document = try parser.parseFromReader(allocator, &file.reader(&read_buf).interface);
     doc = try document.as(Schema, allocator, .{});
 }
 

@@ -102,8 +102,10 @@ pub fn build(b: *std.Build) !void {
                 const adversarial_step = b.step("tests/adversarial", "Run test suite 'adversarial'");
                 const adversarial_gen = b.addExecutable(.{
                     .name = "adversarial_gen",
-                    .root_source_file = b.path("tests/adversarial_gen.zig"),
-                    .target = target,
+                    .root_module = b.createModule(.{
+                        .root_source_file = b.path("tests/adversarial_gen.zig"),
+                        .target = target,
+                    }),
                 });
                 const path = b.path("tests/adversarial.zig");
                 const run_adversarial_gen = b.addRunArtifact(adversarial_gen);
@@ -131,8 +133,10 @@ pub fn build(b: *std.Build) !void {
                 const examples_step = b.step("tests/examples", "Run test suite 'examples'");
                 const examples_gen = b.addExecutable(.{
                     .name = "examples_gen",
-                    .root_source_file = b.path("tests/examples_gen.zig"),
-                    .target = target,
+                    .root_module = b.createModule(.{
+                        .root_source_file = b.path("tests/examples_gen.zig"),
+                        .target = target,
+                    }),
                 });
                 const path = b.path("tests/examples.zig");
                 const run_examples_gen = b.addRunArtifact(examples_gen);
