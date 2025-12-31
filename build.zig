@@ -199,6 +199,21 @@ pub fn build(b: *std.Build) !void {
                 schema_step.dependOn(&run_schema.step);
                 tests.dependOn(schema_step);
             }
+            {
+                const ring_buffer_step = b.step("tests/ring-buffer", "Run test suite 'ring buffer'");
+                const ring_buffer_test = b.addTest(.{
+                    .root_module = b.createModule(.{
+                        .root_source_file = b.path("tests/ring_buffer.zig"),
+                        .target = target,
+                        .optimize = optimize,
+                    }),
+                });
+                ring_buffer_test.root_module.addImport("zimdjson", zimdjson);
+
+                const run_ring_buffer = b.addRunArtifact(ring_buffer_test);
+                ring_buffer_step.dependOn(&run_ring_buffer.step);
+                tests.dependOn(ring_buffer_step);
+            }
         }
         // --
 
