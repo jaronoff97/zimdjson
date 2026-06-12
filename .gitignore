@@ -10,3 +10,4 @@ exe
 .zig-out
 results
 target
+zig-pkg/
