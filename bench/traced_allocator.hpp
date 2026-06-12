@@ -2,8 +2,15 @@
 
 #include <algorithm>
 #include <cstdlib>
-#include <malloc.h>
 #include <new>
+
+#ifdef __APPLE__
+#include <malloc/malloc.h>
+#define MALLOC_USABLE_SIZE(ptr) malloc_size(ptr)
+#else
+#include <malloc.h>
+#define MALLOC_USABLE_SIZE(ptr) malloc_usable_size(ptr)
+#endif
 
 size_t total = 0;
 
@@ -15,7 +22,7 @@ void *operator new(std::size_t sz) {
     ++sz; // avoid std::malloc(0) which may return nullptr on success
 
   if (void *ptr = std::malloc(sz)) {
-    total += malloc_usable_size(ptr);
+    total += MALLOC_USABLE_SIZE(ptr);
     return ptr;
   }
 
@@ -28,7 +35,7 @@ void *operator new[](std::size_t sz) {
     ++sz; // avoid std::malloc(0) which may return nullptr on success
 
   if (void *ptr = std::malloc(sz)) {
-    total += malloc_usable_size(ptr);
+    total += MALLOC_USABLE_SIZE(ptr);
     return ptr;
   }
 
@@ -36,21 +43,21 @@ void *operator new[](std::size_t sz) {
 }
 
 void operator delete(void *ptr) noexcept {
-  total -= malloc_usable_size(ptr);
+  total -= MALLOC_USABLE_SIZE(ptr);
   std::free(ptr);
 }
 
 void operator delete(void *ptr, std::size_t size) noexcept {
-  total -= malloc_usable_size(ptr);
+  total -= MALLOC_USABLE_SIZE(ptr);
   std::free(ptr);
 }
 
 void operator delete[](void *ptr) noexcept {
-  total -= malloc_usable_size(ptr);
+  total -= MALLOC_USABLE_SIZE(ptr);
   std::free(ptr);
 }
 
 void operator delete[](void *ptr, std::size_t size) noexcept {
-  total -= malloc_usable_size(ptr);
+  total -= MALLOC_USABLE_SIZE(ptr);
   std::free(ptr);
 }

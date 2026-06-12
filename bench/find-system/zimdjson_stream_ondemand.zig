@@ -9,6 +9,7 @@ var traced = TracedAllocator{ .wrapped = std.heap.c_allocator };
 const allocator = traced.allocator();
 
 var file: std.fs.File = undefined;
+var read_buf: [4096]u8 = undefined;
 var path: []const u8 = undefined;
 var parser = zimdjson.ondemand.StreamParser(.default).init;
 var result: []const u8 = undefined;
@@ -22,7 +23,8 @@ pub fn prerun() !void {}
 pub fn run() !void {
     file = try std.fs.openFileAbsolute(path, .{});
     try parser.expectDocumentSize(allocator, (try file.stat()).size);
-    const doc = try parser.parseFromReader(allocator, file.reader().any());
+    var file_reader = file.reader(&read_buf);
+    const doc = try parser.parseFromReader(allocator, &file_reader.interface);
     var systems = (try doc.asArray()).iterator();
     while (try systems.next()) |s| {
         if (try s.at("id64").asUnsigned() == find_id) {

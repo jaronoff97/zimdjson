@@ -102,8 +102,10 @@ pub fn build(b: *std.Build) !void {
                 const adversarial_step = b.step("tests/adversarial", "Run test suite 'adversarial'");
                 const adversarial_gen = b.addExecutable(.{
                     .name = "adversarial_gen",
-                    .root_source_file = b.path("tests/adversarial_gen.zig"),
-                    .target = target,
+                    .root_module = b.createModule(.{
+                        .root_source_file = b.path("tests/adversarial_gen.zig"),
+                        .target = target,
+                    }),
                 });
                 const path = b.path("tests/adversarial.zig");
                 const run_adversarial_gen = b.addRunArtifact(adversarial_gen);
@@ -131,8 +133,10 @@ pub fn build(b: *std.Build) !void {
                 const examples_step = b.step("tests/examples", "Run test suite 'examples'");
                 const examples_gen = b.addExecutable(.{
                     .name = "examples_gen",
-                    .root_source_file = b.path("tests/examples_gen.zig"),
-                    .target = target,
+                    .root_module = b.createModule(.{
+                        .root_source_file = b.path("tests/examples_gen.zig"),
+                        .target = target,
+                    }),
                 });
                 const path = b.path("tests/examples.zig");
                 const run_examples_gen = b.addRunArtifact(examples_gen);
@@ -146,7 +150,7 @@ pub fn build(b: *std.Build) !void {
                     }),
                 });
                 if (target.result.os.tag == .macos) {
-                    examples.linkLibC();
+                    examples.root_module.link_libc = true;
                 }
                 if (b.lazyDependency("simdjson-data", .{})) |dep| {
                     addEmbeddedPath(b, examples, dep, "simdjson-data");
@@ -194,6 +198,21 @@ pub fn build(b: *std.Build) !void {
                 const run_schema = b.addRunArtifact(schema);
                 schema_step.dependOn(&run_schema.step);
                 tests.dependOn(schema_step);
+            }
+            {
+                const ring_buffer_step = b.step("tests/ring-buffer", "Run test suite 'ring buffer'");
+                const ring_buffer_test = b.addTest(.{
+                    .root_module = b.createModule(.{
+                        .root_source_file = b.path("tests/ring_buffer.zig"),
+                        .target = target,
+                        .optimize = optimize,
+                    }),
+                });
+                ring_buffer_test.root_module.addImport("zimdjson", zimdjson);
+
+                const run_ring_buffer = b.addRunArtifact(ring_buffer_test);
+                ring_buffer_step.dependOn(&run_ring_buffer.step);
+                tests.dependOn(ring_buffer_step);
             }
         }
         // --
@@ -625,10 +644,10 @@ pub fn build(b: *std.Build) !void {
                         }),
                     });
 
-                    profile.addCSourceFile(.{ .file = b.path("tools/profile.cpp"), .flags = &.{"-DTRACY_ENABLE"} });
-                    profile.linkSystemLibrary("TracyClient");
-                    profile.linkLibrary(p.simdjson);
-                    profile.linkLibrary(p.yyjson);
+                    profile.root_module.addCSourceFile(.{ .file = b.path("tools/profile.cpp"), .flags = &.{"-DTRACY_ENABLE"} });
+                    profile.root_module.linkSystemLibrary("TracyClient", .{});
+                    profile.root_module.linkLibrary(p.simdjson);
+                    profile.root_module.linkLibrary(p.yyjson);
 
                     const run_profile = b.addRunArtifact(profile);
                     run_profile.addArg(file_path);
@@ -668,7 +687,8 @@ fn addEmbeddedPath(b: *std.Build, compile: *std.Build.Step.Compile, dep: *std.Bu
 fn getProvidedPath(b: *std.Build, buf: []u8, use_cwd: bool) ![]const u8 {
     const json_path = if (b.args) |args| args[0] else "";
     if (use_cwd) {
-        return try std.fs.cwd().realpath(json_path, buf);
+        const len = try std.Io.Dir.cwd().realPathFile(std.Options.debug_io, json_path, buf);
+        return buf[0..len];
     } else if (b.lazyDependency("simdjson-data", .{})) |dep| {
         return b.pathJoin(&.{ dep.path("jsonexamples").getPath(b), json_path });
     } else return "";

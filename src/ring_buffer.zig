@@ -43,7 +43,7 @@ pub fn RingBuffer(comptime T: type, comptime length: usize) type {
                         const MEM_REPLACE_PLACEHOLDER = 0x04000;
                         const MEM_PRESERVE_PLACEHOLDER = 0x00002;
 
-                        const buffer: [*]align(std.heap.page_size_min) u8 = @alignCast(@ptrCast(VirtualAlloc2(
+                        const buffer: [*]align(std.heap.page_size_min) u8 = @ptrCast(@alignCast(VirtualAlloc2(
                             null,
                             null,
                             byte_len * 2,
@@ -180,7 +180,16 @@ pub fn RingBuffer(comptime T: type, comptime length: usize) type {
                             0,
                         );
 
-                        return .{ .buffer = buffer.ptr, .handle = handle };
+                        // Unlink the shared memory object immediately - the memory mappings
+                        // keep the underlying object alive, but this removes the name from
+                        // the filesystem and allows the fd to be closed.
+                        _ = std.c.shm_unlink(name);
+
+                        // Close the fd now - it's no longer needed after mmap completes.
+                        // This prevents fd exhaustion in high-concurrency scenarios.
+                        posix.close(handle);
+
+                        return .{ .buffer = buffer.ptr, .handle = -1 };
                     },
                     else => {
                         const handle = try posix.memfd_create("zimdjson_ringbuffer", posix.FD_CLOEXEC);
@@ -234,6 +243,10 @@ pub fn RingBuffer(comptime T: type, comptime length: usize) type {
                         assert(0 != UnmapViewOfFile(self.buffer));
                         assert(0 != UnmapViewOfFile(self.buffer + byte_len));
                         w.CloseHandle(self.handle);
+                    },
+                    .macos => {
+                        // On macOS, we close the fd immediately after mmap, so just unmap.
+                        posix.munmap(self.buffer[0 .. byte_len * 2]);
                     },
                     else => {
                         posix.munmap(self.buffer[0 .. byte_len * 2]);

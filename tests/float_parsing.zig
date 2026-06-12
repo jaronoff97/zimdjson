@@ -8,12 +8,13 @@ fn testFrom(comptime set: []const u8) !void {
     const allocator = std.testing.allocator;
     var parser = ondemand.FullParser(.default).init;
     defer parser.deinit(allocator);
-    const buf = try allocator.alloc(u8, 2048);
-    defer allocator.free(buf);
     const file = try std.fs.cwd().openFile(path, .{});
-    var reader = file.reader();
+    defer file.close();
+    var read_buf: [4096]u8 = undefined;
+    var file_reader = file.reader(&read_buf);
+    const reader = &file_reader.interface;
     var i: usize = 1;
-    while (reader.readUntilDelimiterOrEof(buf, '\n') catch return) |line| : (i += 1) {
+    while (reader.takeDelimiterExclusive('\n')) |line| : (i += 1) {
         const expected = line[4 + 8 + 2 ..][0..16];
         var actual_buf: [16]u8 = undefined;
         const str = line[4 + 8 + 16 + 3 ..];
@@ -31,6 +32,9 @@ fn testFrom(comptime set: []const u8) !void {
             std.debug.print("FAIL: {} {s}\n", .{ i, str });
             @breakpoint();
         };
+    } else |err| switch (err) {
+        error.EndOfStream => {},
+        else => return err,
     }
     // std.debug.print("END:     {s}\n\n", .{set});
 }

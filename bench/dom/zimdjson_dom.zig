@@ -16,7 +16,16 @@ pub fn init(path: []const u8) !void {
     size = (try file.stat()).size;
     json = try allocator.alloc(u8, size + zimdjson.padding);
     @memset(json[size..], ' ');
-    _ = try file.readAll(json[0..size]);
+    var read_buf: [4096]u8 = undefined;
+    var file_reader = file.reader(&read_buf);
+    // Read all bytes (equivalent to old readAll)
+    var total_read: usize = 0;
+    const dest = json[0..size];
+    while (total_read < dest.len) {
+        const bytes_read = try file_reader.interface.readSliceShort(dest[total_read..]);
+        if (bytes_read == 0) break;
+        total_read += bytes_read;
+    }
 }
 
 pub fn prerun() !void {}

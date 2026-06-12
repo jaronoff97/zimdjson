@@ -52,7 +52,7 @@ pub fn Stream(comptime options: Options) type {
             ixs: usize = 0,
         };
 
-        reader: std.io.AnyReader = undefined,
+        reader: *std.Io.Reader = undefined,
         reader_error: ?std.meta.Int(.unsigned, @bitSizeOf(anyerror)),
 
         document: RingBuffer(u8, chunk_len * options.slots) = undefined,
@@ -65,12 +65,18 @@ pub fn Stream(comptime options: Options) type {
         mapped: bool,
 
         const bogus_token = ' ';
-        pub const init = std.mem.zeroInit(Self, .{
+        pub const init: Self = .{
+            .reader = undefined,
             .reader_error = null,
+            .document = undefined,
+            .indexes = undefined,
+            .indexer = .init,
+            .head = .{},
+            .tail = .{},
             .mapped = false,
-        });
+        };
 
-        pub fn build(self: *Self, _: std.mem.Allocator, reader: std.io.AnyReader) Error!void {
+        pub fn build(self: *Self, _: std.mem.Allocator, reader: *std.Io.Reader) Error!void {
             if (self.mapped) {
                 const document = self.document;
                 const indexes = self.indexes;
@@ -168,10 +174,17 @@ pub fn Stream(comptime options: Options) type {
 
         fn index(self: *Self, head: Cursor) Error!usize {
             const buf = self.document.ptr()[self.document.mask(head.doc)..][0..chunk_len];
-            const read: u32 = @intCast(self.reader.readAll(buf) catch |err| {
-                self.reader_error = @intFromError(err);
-                return error.AnyReader;
-            });
+            // Read until buffer is full or EOF (equivalent to old readAll)
+            var total_read: usize = 0;
+            while (total_read < buf.len) {
+                const bytes_read = self.reader.readSliceShort(buf[total_read..]) catch |err| {
+                    self.reader_error = @intFromError(err);
+                    return error.AnyReader;
+                };
+                if (bytes_read == 0) break; // EOF
+                total_read += bytes_read;
+            }
+            const read: u32 = @intCast(total_read);
 
             if (read < chunk_len) {
                 @branchHint(.unlikely);

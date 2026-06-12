@@ -11,7 +11,9 @@ test "small/demo" {
     defer parser.deinit(allocator);
     const file = try std.fs.cwd().openFile(simdjson_data ++ "/jsonexamples/small/demo.json", .{});
     defer file.close();
-    const document = try parser.parseFromReader(allocator, file.reader().any());
+    var read_buf: [4096]u8 = undefined;
+    var file_reader = file.reader(&read_buf);
+    const document = try parser.parseFromReader(allocator, &file_reader.interface);
 
     const Image = struct {
         pub const schema: Parser.schema.Infer(@This()) = .{
@@ -110,7 +112,9 @@ test "small/adversarial" {
     defer parser.deinit(allocator);
     const file = try std.fs.cwd().openFile(simdjson_data ++ "/jsonexamples/small/adversarial.json", .{});
     defer file.close();
-    const document = try parser.parseFromReader(allocator, file.reader().any());
+    var read_buf: [4096]u8 = undefined;
+    var file_reader = file.reader(&read_buf);
+    const document = try parser.parseFromReader(allocator, &file_reader.interface);
 
     const Schema = struct {
         @"\"Name rue": [1]struct {
@@ -139,7 +143,9 @@ test "small/truenull" {
     defer parser.deinit(allocator);
     const file = try std.fs.cwd().openFile(simdjson_data ++ "/jsonexamples/small/truenull.json", .{});
     defer file.close();
-    const document = try parser.parseFromReader(allocator, file.reader().any());
+    var read_buf: [4096]u8 = undefined;
+    var file_reader = file.reader(&read_buf);
+    const document = try parser.parseFromReader(allocator, &file_reader.interface);
 
     const arr = try document.as([]const ?bool, allocator, .{});
     defer arr.deinit();
@@ -154,7 +160,9 @@ test "github_events" {
     defer parser.deinit(allocator);
     const file = try std.fs.cwd().openFile(simdjson_data ++ "/jsonexamples/github_events.json", .{});
     defer file.close();
-    const document = try parser.parseFromReader(allocator, file.reader().any());
+    var read_buf: [4096]u8 = undefined;
+    var file_reader = file.reader(&read_buf);
+    const document = try parser.parseFromReader(allocator, &file_reader.interface);
 
     const Event = union(enum) {
         pub const schema: Parser.schema.Infer(@This()) = .{
@@ -215,7 +223,9 @@ test "github_events untagged payload" {
     defer parser.deinit(allocator);
     const file = try std.fs.cwd().openFile(simdjson_data ++ "/jsonexamples/github_events.json", .{});
     defer file.close();
-    const document = try parser.parseFromReader(allocator, file.reader().any());
+    var read_buf: [4096]u8 = undefined;
+    var file_reader = file.reader(&read_buf);
+    const document = try parser.parseFromReader(allocator, &file_reader.interface);
 
     const Payload = union(enum) {
         pub const schema: Parser.schema.Infer(@This()) = .{
@@ -659,7 +669,7 @@ test "std.ArrayListAlignedUnmanaged" {
     );
 
     const Coordinate = struct { x: i32, y: i32, z: i32 };
-    var coords = try document.as(std.ArrayListAlignedUnmanaged(Coordinate, 32), allocator, .{});
+    var coords = try document.as(std.ArrayListAlignedUnmanaged(Coordinate, .@"32"), allocator, .{});
     defer coords.deinit();
 
     try std.testing.expectEqual(coords.value.items.len, 3);
@@ -668,55 +678,57 @@ test "std.ArrayListAlignedUnmanaged" {
     try std.testing.expectEqual(Coordinate{ .x = 7, .y = 8, .z = 9 }, coords.value.items[2]);
 }
 
-test "std.SinglyLinkedList" {
-    var parser = Parser.init;
-    defer parser.deinit(allocator);
-    const document = try parser.parseFromSlice(allocator,
-        \\[
-        \\    { "x": 1, "y": 2, "z": 3 },
-        \\    { "x": 4, "y": 5, "z": 6 },
-        \\    { "x": 7, "y": 8, "z": 9 }
-        \\]
-    );
+// std.SinglyLinkedList is now intrusive (no generic type parameter) in Zig 0.15.x
+// test "std.SinglyLinkedList" {
+//     var parser = Parser.init;
+//     defer parser.deinit(allocator);
+//     const document = try parser.parseFromSlice(allocator,
+//         \\[
+//         \\    { "x": 1, "y": 2, "z": 3 },
+//         \\    { "x": 4, "y": 5, "z": 6 },
+//         \\    { "x": 7, "y": 8, "z": 9 }
+//         \\]
+//     );
+//
+//     const Coordinate = struct { x: i32, y: i32, z: i32 };
+//     var coords = try document.as(std.SinglyLinkedList(Coordinate), allocator, .{});
+//     defer coords.deinit();
+//
+//     var it = coords.value.first;
+//     try std.testing.expectEqual(Coordinate{ .x = 1, .y = 2, .z = 3 }, it.?.data);
+//     it = it.?.next;
+//     try std.testing.expectEqual(Coordinate{ .x = 4, .y = 5, .z = 6 }, it.?.data);
+//     it = it.?.next;
+//     try std.testing.expectEqual(Coordinate{ .x = 7, .y = 8, .z = 9 }, it.?.data);
+//     it = it.?.next;
+//     try std.testing.expectEqual(null, it);
+// }
 
-    const Coordinate = struct { x: i32, y: i32, z: i32 };
-    var coords = try document.as(std.SinglyLinkedList(Coordinate), allocator, .{});
-    defer coords.deinit();
-
-    var it = coords.value.first;
-    try std.testing.expectEqual(Coordinate{ .x = 1, .y = 2, .z = 3 }, it.?.data);
-    it = it.?.next;
-    try std.testing.expectEqual(Coordinate{ .x = 4, .y = 5, .z = 6 }, it.?.data);
-    it = it.?.next;
-    try std.testing.expectEqual(Coordinate{ .x = 7, .y = 8, .z = 9 }, it.?.data);
-    it = it.?.next;
-    try std.testing.expectEqual(null, it);
-}
-
-test "std.DoublyLinkedList" {
-    var parser = Parser.init;
-    defer parser.deinit(allocator);
-    const document = try parser.parseFromSlice(allocator,
-        \\[
-        \\    { "x": 1, "y": 2, "z": 3 },
-        \\    { "x": 4, "y": 5, "z": 6 },
-        \\    { "x": 7, "y": 8, "z": 9 }
-        \\]
-    );
-
-    const Coordinate = struct { x: i32, y: i32, z: i32 };
-    var coords = try document.as(std.DoublyLinkedList(Coordinate), allocator, .{});
-    defer coords.deinit();
-
-    var it = coords.value.first;
-    try std.testing.expectEqual(Coordinate{ .x = 1, .y = 2, .z = 3 }, it.?.data);
-    it = it.?.next;
-    try std.testing.expectEqual(Coordinate{ .x = 4, .y = 5, .z = 6 }, it.?.data);
-    it = it.?.next;
-    try std.testing.expectEqual(Coordinate{ .x = 7, .y = 8, .z = 9 }, it.?.data);
-    it = it.?.next;
-    try std.testing.expectEqual(null, it);
-}
+// std.DoublyLinkedList is now intrusive (no generic type parameter) in Zig 0.15.x
+// test "std.DoublyLinkedList" {
+//     var parser = Parser.init;
+//     defer parser.deinit(allocator);
+//     const document = try parser.parseFromSlice(allocator,
+//         \\[
+//         \\    { "x": 1, "y": 2, "z": 3 },
+//         \\    { "x": 4, "y": 5, "z": 6 },
+//         \\    { "x": 7, "y": 8, "z": 9 }
+//         \\]
+//     );
+//
+//     const Coordinate = struct { x: i32, y: i32, z: i32 };
+//     var coords = try document.as(std.DoublyLinkedList(Coordinate), allocator, .{});
+//     defer coords.deinit();
+//
+//     var it = coords.value.first;
+//     try std.testing.expectEqual(Coordinate{ .x = 1, .y = 2, .z = 3 }, it.?.data);
+//     it = it.?.next;
+//     try std.testing.expectEqual(Coordinate{ .x = 4, .y = 5, .z = 6 }, it.?.data);
+//     it = it.?.next;
+//     try std.testing.expectEqual(Coordinate{ .x = 7, .y = 8, .z = 9 }, it.?.data);
+//     it = it.?.next;
+//     try std.testing.expectEqual(null, it);
+// }
 
 test "std.StringArrayHashMapUnmanaged" {
     var parser = Parser.init;
@@ -760,47 +772,49 @@ test "std.StringHashMapUnmanaged" {
     try std.testing.expectEqual(Coordinate{ .x = 7, .y = 8, .z = 9 }, coords.value.get("4x4").?);
 }
 
-test "std.BoundedArray" {
-    var parser = Parser.init;
-    defer parser.deinit(allocator);
-    const document = try parser.parseFromSlice(allocator,
-        \\[
-        \\    { "x": 1, "y": 2, "z": 3 },
-        \\    { "x": 4, "y": 5, "z": 6 },
-        \\    { "x": 7, "y": 8, "z": 9 }
-        \\]
-    );
+// std.BoundedArray was removed in Zig 0.15.x
+// test "std.BoundedArray" {
+//     var parser = Parser.init;
+//     defer parser.deinit(allocator);
+//     const document = try parser.parseFromSlice(allocator,
+//         \\[
+//         \\    { "x": 1, "y": 2, "z": 3 },
+//         \\    { "x": 4, "y": 5, "z": 6 },
+//         \\    { "x": 7, "y": 8, "z": 9 }
+//         \\]
+//     );
+//
+//     const Coordinate = struct { x: i32, y: i32, z: i32 };
+//     var coords = try document.as(std.BoundedArray(Coordinate, 3), allocator, .{});
+//     defer coords.deinit();
+//
+//     try std.testing.expectEqual(coords.value.len, 3);
+//     try std.testing.expectEqual(Coordinate{ .x = 1, .y = 2, .z = 3 }, coords.value.get(0));
+//     try std.testing.expectEqual(Coordinate{ .x = 4, .y = 5, .z = 6 }, coords.value.get(1));
+//     try std.testing.expectEqual(Coordinate{ .x = 7, .y = 8, .z = 9 }, coords.value.get(2));
+// }
 
-    const Coordinate = struct { x: i32, y: i32, z: i32 };
-    var coords = try document.as(std.BoundedArray(Coordinate, 3), allocator, .{});
-    defer coords.deinit();
-
-    try std.testing.expectEqual(coords.value.len, 3);
-    try std.testing.expectEqual(Coordinate{ .x = 1, .y = 2, .z = 3 }, coords.value.get(0));
-    try std.testing.expectEqual(Coordinate{ .x = 4, .y = 5, .z = 6 }, coords.value.get(1));
-    try std.testing.expectEqual(Coordinate{ .x = 7, .y = 8, .z = 9 }, coords.value.get(2));
-}
-
-test "std.BoundedArrayAligned" {
-    var parser = Parser.init;
-    defer parser.deinit(allocator);
-    const document = try parser.parseFromSlice(allocator,
-        \\[
-        \\    { "x": 1, "y": 2, "z": 3 },
-        \\    { "x": 4, "y": 5, "z": 6 },
-        \\    { "x": 7, "y": 8, "z": 9 }
-        \\]
-    );
-
-    const Coordinate = struct { x: i32, y: i32, z: i32 };
-    var coords = try document.as(std.BoundedArrayAligned(Coordinate, 32, 4), allocator, .{});
-    defer coords.deinit();
-
-    try std.testing.expectEqual(coords.value.len, 3);
-    try std.testing.expectEqual(Coordinate{ .x = 1, .y = 2, .z = 3 }, coords.value.get(0));
-    try std.testing.expectEqual(Coordinate{ .x = 4, .y = 5, .z = 6 }, coords.value.get(1));
-    try std.testing.expectEqual(Coordinate{ .x = 7, .y = 8, .z = 9 }, coords.value.get(2));
-}
+// std.BoundedArrayAligned was removed in Zig 0.15.x
+// test "std.BoundedArrayAligned" {
+//     var parser = Parser.init;
+//     defer parser.deinit(allocator);
+//     const document = try parser.parseFromSlice(allocator,
+//         \\[
+//         \\    { "x": 1, "y": 2, "z": 3 },
+//         \\    { "x": 4, "y": 5, "z": 6 },
+//         \\    { "x": 7, "y": 8, "z": 9 }
+//         \\]
+//     );
+//
+//     const Coordinate = struct { x: i32, y: i32, z: i32 };
+//     var coords = try document.as(std.BoundedArrayAligned(Coordinate, 32, 4), allocator, .{});
+//     defer coords.deinit();
+//
+//     try std.testing.expectEqual(coords.value.len, 3);
+//     try std.testing.expectEqual(Coordinate{ .x = 1, .y = 2, .z = 3 }, coords.value.get(0));
+//     try std.testing.expectEqual(Coordinate{ .x = 4, .y = 5, .z = 6 }, coords.value.get(1));
+//     try std.testing.expectEqual(Coordinate{ .x = 7, .y = 8, .z = 9 }, coords.value.get(2));
+// }
 
 test "std.EnumMap" {
     var parser = Parser.init;

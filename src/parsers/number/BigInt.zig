@@ -5,12 +5,63 @@ pub const Limb = usize;
 pub const limb_bits = @sizeOf(Limb) * 8;
 const Self = @This();
 const capacity = 58; // ceil(log2(10 ** (max_big_digits + -min_pow10)) / 64)
-const Limbs = std.BoundedArray(Limb, capacity);
+
+const Limbs = struct {
+    const limbs_capacity = capacity;
+    buffer: [limbs_capacity]Limb = undefined,
+    len: u8 = 0,
+
+    fn fromSlice(items: []const Limb) error{Overflow}!Limbs {
+        if (items.len > limbs_capacity) return error.Overflow;
+        var result: Limbs = .{};
+        @memcpy(result.buffer[0..items.len], items);
+        result.len = @intCast(items.len);
+        return result;
+    }
+
+    fn slice(self: *const Limbs) []const Limb {
+        return self.buffer[0..self.len];
+    }
+
+    fn sliceMut(self: *Limbs) []Limb {
+        return self.buffer[0..self.len];
+    }
+
+    fn getCapacity(self: *const Limbs) usize {
+        _ = self;
+        return limbs_capacity;
+    }
+
+    fn get(self: *const Limbs, index: usize) Limb {
+        return self.buffer[index];
+    }
+
+    fn append(self: *Limbs, item: Limb) error{Overflow}!void {
+        if (self.len >= limbs_capacity) return error.Overflow;
+        self.buffer[self.len] = item;
+        self.len += 1;
+    }
+
+    fn appendSliceAssumeCapacity(self: *Limbs, items: []const Limb) void {
+        @memcpy(self.buffer[self.len..][0..items.len], items);
+        self.len += @intCast(items.len);
+    }
+
+    fn appendAssumeCapacity(self: *Limbs, item: Limb) void {
+        self.buffer[self.len] = item;
+        self.len += 1;
+    }
+
+    fn resize(self: *Limbs, new_len: usize) error{Overflow}!void {
+        if (new_len > limbs_capacity) return error.Overflow;
+        self.len = @intCast(new_len);
+    }
+};
 
 limbs: Limbs,
 
 pub fn init() Self {
-    return .{ .limbs = Limbs.init(0) catch unreachable };
+    return .{ .limbs = .{} };
 }
 
 pub fn from(value: u64) Self {
@@ -49,7 +100,7 @@ pub fn mul(self: *Self, n: []const Limb) !void {
 
 pub fn mulScalar(self: *Self, n: Limb) !void {
     var carry: Limb = 0;
-    for (self.limbs.slice()) |*limb| {
+    for (self.limbs.sliceMut()) |*limb| {
         const wide = std.math.mulWide(Limb, limb.*, n) + carry;
         const res: Limb = @truncate(wide);
         limb.* = res;
@@ -71,7 +122,7 @@ fn shlBits(self: *Self, n: u8) !void {
     const shl = n;
     const shr = limb_bits - shl;
     var prev: Limb = 0;
-    for (self.limbs.slice()) |*m| {
+    for (self.limbs.sliceMut()) |*m| {
         const p = m.*;
         m.* = (p << @intCast(shl)) | (prev >> @intCast(shr));
         prev = p;
@@ -82,7 +133,7 @@ fn shlBits(self: *Self, n: u8) !void {
 
 fn shlLimbs(self: *Self, n: u8) !void {
     assert(n > 0);
-    if (n + self.len() > self.limbs.capacity()) return error.Overflow;
+    if (n + self.len() > self.limbs.getCapacity()) return error.Overflow;
     if (self.len() != 0) {
         std.mem.copyBackwards(
             Limb,
