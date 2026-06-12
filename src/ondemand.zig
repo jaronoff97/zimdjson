@@ -1048,7 +1048,10 @@ pub fn Parser(comptime format: types.Format, comptime options: Options) type {
                             self.endContainer();
                             return false;
                         },
-                        else => return self.reportError(error.ExpectedObjectCommaOrEnd),
+                        else => {
+                            try self.reportError(error.ExpectedObjectCommaOrEnd);
+                            unreachable;
+                        },
                     }
                 }
 
@@ -1064,7 +1067,10 @@ pub fn Parser(comptime format: types.Format, comptime options: Options) type {
                             self.endContainer();
                             return false;
                         },
-                        else => return self.reportError(error.ExpectedArrayCommaOrEnd),
+                        else => {
+                            try self.reportError(error.ExpectedArrayCommaOrEnd);
+                            unreachable;
+                        },
                     }
                 }
 
@@ -1831,11 +1837,17 @@ pub fn Parser(comptime format: types.Format, comptime options: Options) type {
                 inline fn start(iter: Value.Iterator) Error!Field {
                     iter.assertAtNext();
                     const key_quote = try iter.cursor.next();
-                    if (key_quote[0] != '"') return iter.reportError(error.ExpectedKey);
+                    if (key_quote[0] != '"') {
+                        try iter.reportError(error.ExpectedKey);
+                        unreachable;
+                    }
 
                     iter.assertAtNext();
                     const colon = try iter.cursor.next();
-                    if (colon[0] != ':') return iter.reportError(error.ExpectedColon);
+                    if (colon[0] != ':') {
+                        try iter.reportError(error.ExpectedColon);
+                        unreachable;
+                    }
                     iter.cursor.descend(iter.start_depth + 1);
 
                     return .{
@@ -2419,28 +2431,21 @@ pub fn Parser(comptime format: types.Format, comptime options: Options) type {
             fn StructFields(comptime T: type) type {
                 assert(@typeInfo(T) == .@"struct");
                 const fields = _std.meta.fields(T);
-                comptime var schema_fields: [fields.len]_std.builtin.Type.StructField = undefined;
+                comptime var field_names: [fields.len][]const u8 = undefined;
+                comptime var field_types: [fields.len]type = undefined;
+                comptime var field_attrs: [fields.len]_std.builtin.Type.StructField.Attributes = undefined;
                 inline for (0..fields.len) |i| {
                     const field = fields[i];
                     if (field.is_comptime) @compileError("comptime fields are not supported: " ++ @typeName(T) ++ "." ++ field.name);
                     const schema_field = StructField(field.type);
-                    schema_fields[i] = .{
-                        .type = schema_field,
-                        .name = field.name,
-                        .default_value_ptr = &schema_field{},
-                        .is_comptime = false,
-                        .alignment = @alignOf(schema_field),
-                    };
+                    field_names[i] = field.name;
+                    field_types[i] = schema_field;
+                    field_attrs[i] = .{ .default_value_ptr = &schema_field{} };
                 }
-                const sf = schema_fields;
-                return @Type(.{
-                    .@"struct" = .{
-                        .fields = &sf,
-                        .layout = .auto,
-                        .decls = &.{},
-                        .is_tuple = false,
-                    },
-                });
+                const names = field_names;
+                const ftypes = field_types;
+                const attrs = field_attrs;
+                return @Struct(.auto, null, &names, &ftypes, &attrs);
             }
 
             /// Schema options for a struct field.
@@ -2699,26 +2704,27 @@ pub fn Parser(comptime format: types.Format, comptime options: Options) type {
             };
 
             inline fn makeFieldsSPTuple(comptime T: type, comptime R: schema.Struct(T), comptime fields: []const _std.builtin.Type.StructField) type {
-                comptime var tuple_fields: [fields.len]_std.builtin.Type.StructField = undefined;
+                comptime var field_names: [fields.len][]const u8 = undefined;
+                comptime var field_types: [fields.len]type = undefined;
+                comptime var field_attrs: [fields.len]_std.builtin.Type.StructField.Attributes = undefined;
                 @setEvalBranchQuota(1000 * fields.len);
-                inline for (fields, &tuple_fields) |field, *tuple| {
+                inline for (fields, 0..) |field, i| {
                     const field_schema = @field(R.fields, field.name);
                     const S = comptime resolveSchema(field.type, field_schema.schema);
 
                     const P: ?CustomParser(field.type) = comptime S.parse_with orelse CustomParser(field.type).infer();
-                    tuple.name = field.name;
-                    tuple.type = struct { @TypeOf(S), @TypeOf(P) };
-                    tuple.default_value_ptr = &@as(struct { @TypeOf(S), @TypeOf(P) }, .{ S, P });
-                    tuple.alignment = @alignOf(tuple.type);
-                    tuple.is_comptime = true;
+                    const FieldType = struct { @TypeOf(S), @TypeOf(P) };
+                    field_names[i] = field.name;
+                    field_types[i] = FieldType;
+                    field_attrs[i] = .{
+                        .default_value_ptr = &@as(FieldType, .{ S, P }),
+                        .@"comptime" = true,
+                    };
                 }
-                const result_fields = tuple_fields;
-                return @Type(.{ .@"struct" = .{
-                    .fields = &result_fields,
-                    .decls = &.{},
-                    .layout = .auto,
-                    .is_tuple = false,
-                } });
+                const names = field_names;
+                const ftypes = field_types;
+                const attrs = field_attrs;
+                return @Struct(.auto, null, &names, &ftypes, &attrs);
             }
 
             pub fn Enum(comptime T: type) type {
@@ -2738,27 +2744,20 @@ pub fn Parser(comptime format: types.Format, comptime options: Options) type {
             fn EnumFields(comptime T: type) type {
                 assert(@typeInfo(T) == .@"enum");
                 const fields = _std.meta.fields(T);
-                comptime var schema_fields: [fields.len]_std.builtin.Type.StructField = undefined;
+                comptime var field_names: [fields.len][]const u8 = undefined;
+                comptime var field_types: [fields.len]type = undefined;
+                comptime var field_attrs: [fields.len]_std.builtin.Type.StructField.Attributes = undefined;
                 inline for (0..fields.len) |i| {
                     const field = fields[i];
                     const schema_field = EnumField;
-                    schema_fields[i] = .{
-                        .type = schema_field,
-                        .name = field.name,
-                        .default_value_ptr = &schema_field{},
-                        .is_comptime = false,
-                        .alignment = @alignOf(schema_field),
-                    };
+                    field_names[i] = field.name;
+                    field_types[i] = schema_field;
+                    field_attrs[i] = .{ .default_value_ptr = &schema_field{} };
                 }
-                const sf = schema_fields;
-                return @Type(.{
-                    .@"struct" = .{
-                        .fields = &sf,
-                        .layout = .auto,
-                        .decls = &.{},
-                        .is_tuple = false,
-                    },
-                });
+                const names = field_names;
+                const ftypes = field_types;
+                const attrs = field_attrs;
+                return @Struct(.auto, null, &names, &ftypes, &attrs);
             }
 
             /// Schema options for an enum field.
@@ -2809,27 +2808,20 @@ pub fn Parser(comptime format: types.Format, comptime options: Options) type {
             fn UnionFields(comptime T: type) type {
                 assert(@typeInfo(T) == .@"union");
                 const fields = _std.meta.fields(T);
-                comptime var schema_fields: [fields.len]_std.builtin.Type.StructField = undefined;
+                comptime var field_names: [fields.len][]const u8 = undefined;
+                comptime var field_types: [fields.len]type = undefined;
+                comptime var field_attrs: [fields.len]_std.builtin.Type.StructField.Attributes = undefined;
                 inline for (0..fields.len) |i| {
                     const field = fields[i];
                     const schema_field = UnionField(field.type);
-                    schema_fields[i] = .{
-                        .type = schema_field,
-                        .name = field.name,
-                        .default_value_ptr = &schema_field{},
-                        .is_comptime = false,
-                        .alignment = @alignOf(schema_field),
-                    };
+                    field_names[i] = field.name;
+                    field_types[i] = schema_field;
+                    field_attrs[i] = .{ .default_value_ptr = &schema_field{} };
                 }
-                const sf = schema_fields;
-                return @Type(.{
-                    .@"struct" = .{
-                        .fields = &sf,
-                        .layout = .auto,
-                        .decls = &.{},
-                        .is_tuple = false,
-                    },
-                });
+                const names = field_names;
+                const ftypes = field_types;
+                const attrs = field_attrs;
+                return @Struct(.auto, null, &names, &ftypes, &attrs);
             }
 
             /// Schema options for an union field.

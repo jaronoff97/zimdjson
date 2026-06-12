@@ -150,7 +150,7 @@ pub fn build(b: *std.Build) !void {
                     }),
                 });
                 if (target.result.os.tag == .macos) {
-                    examples.linkLibC();
+                    examples.root_module.link_libc = true;
                 }
                 if (b.lazyDependency("simdjson-data", .{})) |dep| {
                     addEmbeddedPath(b, examples, dep, "simdjson-data");
@@ -644,10 +644,10 @@ pub fn build(b: *std.Build) !void {
                         }),
                     });
 
-                    profile.addCSourceFile(.{ .file = b.path("tools/profile.cpp"), .flags = &.{"-DTRACY_ENABLE"} });
-                    profile.linkSystemLibrary("TracyClient");
-                    profile.linkLibrary(p.simdjson);
-                    profile.linkLibrary(p.yyjson);
+                    profile.root_module.addCSourceFile(.{ .file = b.path("tools/profile.cpp"), .flags = &.{"-DTRACY_ENABLE"} });
+                    profile.root_module.linkSystemLibrary("TracyClient", .{});
+                    profile.root_module.linkLibrary(p.simdjson);
+                    profile.root_module.linkLibrary(p.yyjson);
 
                     const run_profile = b.addRunArtifact(profile);
                     run_profile.addArg(file_path);
@@ -687,7 +687,8 @@ fn addEmbeddedPath(b: *std.Build, compile: *std.Build.Step.Compile, dep: *std.Bu
 fn getProvidedPath(b: *std.Build, buf: []u8, use_cwd: bool) ![]const u8 {
     const json_path = if (b.args) |args| args[0] else "";
     if (use_cwd) {
-        return try std.fs.cwd().realpath(json_path, buf);
+        const len = try std.Io.Dir.cwd().realPathFile(std.Options.debug_io, json_path, buf);
+        return buf[0..len];
     } else if (b.lazyDependency("simdjson-data", .{})) |dep| {
         return b.pathJoin(&.{ dep.path("jsonexamples").getPath(b), json_path });
     } else return "";
