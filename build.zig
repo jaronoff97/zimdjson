@@ -7,11 +7,13 @@ pub fn build(b: *std.Build) !void {
 
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const use_llvm = b.option(bool, "llvm", "Use LLVM for test compilation");
 
     const zimdjson = b.addModule("zimdjson", .{
         .root_source_file = b.path("src/zimdjson.zig"),
         .target = target,
         .optimize = optimize,
+        .link_libc = true,
     });
 
     const is_dev_mode = b.option(bool, "dev_mode", "Enable zimdjson development mode (default: true)") orelse is_root;
@@ -24,7 +26,7 @@ pub fn build(b: *std.Build) !void {
             \\Prefix the file path with the current directory instead
             \\                               of simdjson/simdjson-data (default: no)
         ) orelse false;
-        var path_buf: [1024]u8 = undefined;
+        const json_path = b.option([]const u8, "file", "JSON file path") orelse "";
 
         {
             const docs = b.step("docs", "Generate documentation");
@@ -46,11 +48,20 @@ pub fn build(b: *std.Build) !void {
         // -- Testing
         {
             const tests = b.step("tests", "Run all test suites");
+            const tests_check = b.step("tests/check", "Compile all test suites without execution");
             const tests_generate = b.step("tests/generate", "Generate compliant tests");
+
+            const module_tests = b.addTest(.{ .root_module = zimdjson, .use_llvm = use_llvm });
+            b.step("test/check", "Compile module regression tests without execution").dependOn(&module_tests.step);
+            tests_check.dependOn(&module_tests.step);
+            const run_module_tests = b.addRunArtifact(module_tests);
+            b.step("test", "Run module regression tests").dependOn(&run_module_tests.step);
+            tests.dependOn(&run_module_tests.step);
 
             {
                 const float_parsing_step = b.step("tests/float-parsing", "Run test suite 'float parsing'");
                 const float_parsing = b.addTest(.{
+                    .use_llvm = use_llvm,
                     .root_module = b.createModule(.{
                         .root_source_file = b.path("tests/float_parsing.zig"),
                         .target = target,
@@ -62,6 +73,7 @@ pub fn build(b: *std.Build) !void {
                 }
 
                 float_parsing.root_module.addImport("zimdjson", zimdjson);
+                tests_check.dependOn(&float_parsing.step);
 
                 const run_float_parsing = b.addRunArtifact(float_parsing);
                 float_parsing_step.dependOn(&run_float_parsing.step);
@@ -78,9 +90,10 @@ pub fn build(b: *std.Build) !void {
                 });
                 const path = b.path("tests/minefield.zig");
                 const run_minefield_gen = b.addRunArtifact(minefield_gen);
-                run_minefield_gen.addArg(path.getPath(b));
+                run_minefield_gen.addFileArg(path);
 
                 const minefield = b.addTest(.{
+                    .use_llvm = use_llvm,
                     .root_module = b.createModule(.{
                         .root_source_file = path,
                         .target = target,
@@ -92,6 +105,7 @@ pub fn build(b: *std.Build) !void {
                     addEmbeddedPath(b, minefield_gen, dep, "simdjson-data");
                 }
                 minefield.root_module.addImport("zimdjson", zimdjson);
+                tests_check.dependOn(&minefield.step);
 
                 const run_minefield = b.addRunArtifact(minefield);
                 minefield_step.dependOn(&run_minefield.step);
@@ -109,9 +123,10 @@ pub fn build(b: *std.Build) !void {
                 });
                 const path = b.path("tests/adversarial.zig");
                 const run_adversarial_gen = b.addRunArtifact(adversarial_gen);
-                run_adversarial_gen.addArg(path.getPath(b));
+                run_adversarial_gen.addFileArg(path);
 
                 const adversarial = b.addTest(.{
+                    .use_llvm = use_llvm,
                     .root_module = b.createModule(.{
                         .root_source_file = path,
                         .target = target,
@@ -123,6 +138,7 @@ pub fn build(b: *std.Build) !void {
                     addEmbeddedPath(b, adversarial_gen, dep, "simdjson-data");
                 }
                 adversarial.root_module.addImport("zimdjson", zimdjson);
+                tests_check.dependOn(&adversarial.step);
 
                 const run_adversarial = b.addRunArtifact(adversarial);
                 adversarial_step.dependOn(&run_adversarial.step);
@@ -140,9 +156,10 @@ pub fn build(b: *std.Build) !void {
                 });
                 const path = b.path("tests/examples.zig");
                 const run_examples_gen = b.addRunArtifact(examples_gen);
-                run_examples_gen.addArg(path.getPath(b));
+                run_examples_gen.addFileArg(path);
 
                 const examples = b.addTest(.{
+                    .use_llvm = use_llvm,
                     .root_module = b.createModule(.{
                         .root_source_file = path,
                         .target = target,
@@ -157,6 +174,7 @@ pub fn build(b: *std.Build) !void {
                     addEmbeddedPath(b, examples_gen, dep, "simdjson-data");
                 }
                 examples.root_module.addImport("zimdjson", zimdjson);
+                tests_check.dependOn(&examples.step);
 
                 const run_examples = b.addRunArtifact(examples);
                 examples_step.dependOn(&run_examples.step);
@@ -166,6 +184,7 @@ pub fn build(b: *std.Build) !void {
             {
                 const ondemand_step = b.step("tests/ondemand", "Run test suite 'ondemand'");
                 const ondemand = b.addTest(.{
+                    .use_llvm = use_llvm,
                     .root_module = b.createModule(.{
                         .root_source_file = b.path("tests/ondemand.zig"),
                         .target = target,
@@ -176,6 +195,7 @@ pub fn build(b: *std.Build) !void {
                     addEmbeddedPath(b, ondemand, dep, "simdjson-data");
                 }
                 ondemand.root_module.addImport("zimdjson", zimdjson);
+                tests_check.dependOn(&ondemand.step);
 
                 const run_ondemand = b.addRunArtifact(ondemand);
                 ondemand_step.dependOn(&run_ondemand.step);
@@ -184,6 +204,7 @@ pub fn build(b: *std.Build) !void {
             {
                 const schema_step = b.step("tests/schema", "Run test suite 'schema'");
                 const schema = b.addTest(.{
+                    .use_llvm = use_llvm,
                     .root_module = b.createModule(.{
                         .root_source_file = b.path("tests/schema.zig"),
                         .target = target,
@@ -194,6 +215,7 @@ pub fn build(b: *std.Build) !void {
                     addEmbeddedPath(b, schema, dep, "simdjson-data");
                 }
                 schema.root_module.addImport("zimdjson", zimdjson);
+                tests_check.dependOn(&schema.step);
 
                 const run_schema = b.addRunArtifact(schema);
                 schema_step.dependOn(&run_schema.step);
@@ -202,6 +224,7 @@ pub fn build(b: *std.Build) !void {
             {
                 const ring_buffer_step = b.step("tests/ring-buffer", "Run test suite 'ring buffer'");
                 const ring_buffer_test = b.addTest(.{
+                    .use_llvm = use_llvm,
                     .root_module = b.createModule(.{
                         .root_source_file = b.path("tests/ring_buffer.zig"),
                         .target = target,
@@ -209,6 +232,7 @@ pub fn build(b: *std.Build) !void {
                     }),
                 });
                 ring_buffer_test.root_module.addImport("zimdjson", zimdjson);
+                tests_check.dependOn(&ring_buffer_test.step);
 
                 const run_ring_buffer = b.addRunArtifact(ring_buffer_test);
                 ring_buffer_step.dependOn(&run_ring_buffer.step);
@@ -223,7 +247,7 @@ pub fn build(b: *std.Build) !void {
                 const name = "index";
                 const bench_step = b.step("bench/" ++ name, "Run benchmark 'SIMD indexer'");
                 const parsers = Parsers.get(b, target, optimize);
-                const file_path = try getProvidedPath(b, &path_buf, use_cwd);
+                const file_path = getProvidedPath(b, json_path, use_cwd);
 
                 if (parsers) |p| {
                     var suite_dom = bench.Suite(name){ .zimdjson = zimdjson, .simdjson = p.simdjson, .target = target, .optimize = optimize };
@@ -241,7 +265,7 @@ pub fn build(b: *std.Build) !void {
                 const name = "dom";
                 const bench_step = b.step("bench/" ++ name, "Run benchmark 'DOM parsing'");
                 const parsers = Parsers.get(b, target, optimize);
-                const file_path = try getProvidedPath(b, &path_buf, use_cwd);
+                const file_path = getProvidedPath(b, json_path, use_cwd);
 
                 if (parsers) |p| {
                     var suite_dom = bench.Suite(name){ .zimdjson = zimdjson, .simdjson = p.simdjson, .target = target, .optimize = optimize };
@@ -262,7 +286,7 @@ pub fn build(b: *std.Build) !void {
                 const name = "streaming";
                 const bench_step = b.step("bench/" ++ name, "Run benchmark 'streaming'");
                 const parsers = Parsers.get(b, target, optimize);
-                const file_path = try getProvidedPath(b, &path_buf, use_cwd);
+                const file_path = getProvidedPath(b, json_path, use_cwd);
 
                 if (parsers) |p| {
                     var suite_dom = bench.Suite(name){ .zimdjson = zimdjson, .simdjson = p.simdjson, .target = target, .optimize = optimize };
@@ -285,8 +309,8 @@ pub fn build(b: *std.Build) !void {
                 const parsers = Parsers.get(b, target, optimize);
                 const file_path = path: {
                     if (b.lazyDependency("simdjson-data", .{})) |dep| {
-                        break :path dep.path("jsonexamples/twitter.json").getPath(b);
-                    } else break :path "";
+                        break :path dep.path("jsonexamples/twitter.json");
+                    } else break :path b.path(".");
                 };
 
                 if (parsers) |p| {
@@ -317,8 +341,8 @@ pub fn build(b: *std.Build) !void {
                 const parsers = Parsers.get(b, target, optimize);
                 const file_path = path: {
                     if (b.lazyDependency("simdjson-data", .{})) |dep| {
-                        break :path dep.path("jsonexamples/twitter.json").getPath(b);
-                    } else break :path "";
+                        break :path dep.path("jsonexamples/twitter.json");
+                    } else break :path b.path(".");
                 };
 
                 if (parsers) |p| {
@@ -349,8 +373,8 @@ pub fn build(b: *std.Build) !void {
                 const parsers = Parsers.get(b, target, optimize);
                 const file_path = path: {
                     if (b.lazyDependency("simdjson-data", .{})) |dep| {
-                        break :path dep.path("jsonexamples/twitter.json").getPath(b);
-                    } else break :path "";
+                        break :path dep.path("jsonexamples/twitter.json");
+                    } else break :path b.path(".");
                 };
 
                 if (parsers) |p| {
@@ -381,8 +405,8 @@ pub fn build(b: *std.Build) !void {
                 const parsers = Parsers.get(b, target, optimize);
                 const file_path = path: {
                     if (b.lazyDependency("simdjson-data", .{})) |dep| {
-                        break :path dep.path("jsonexamples/twitter.json").getPath(b);
-                    } else break :path "";
+                        break :path dep.path("jsonexamples/twitter.json");
+                    } else break :path b.path(".");
                 };
 
                 if (parsers) |p| {
@@ -411,7 +435,7 @@ pub fn build(b: *std.Build) !void {
                 const name = "find-system";
                 const bench_step = b.step("bench/" ++ name, "Run benchmark 'find system'");
                 const parsers = Parsers.get(b, target, optimize);
-                const file_path = try getProvidedPath(b, &path_buf, use_cwd);
+                const file_path = getProvidedPath(b, json_path, use_cwd);
 
                 if (parsers) |p| {
                     var suite = bench.Suite(name){
@@ -439,7 +463,7 @@ pub fn build(b: *std.Build) !void {
                 const name = "top-factions";
                 const bench_step = b.step("bench/" ++ name, "Run benchmark 'top factions'");
                 const parsers = Parsers.get(b, target, optimize);
-                const file_path = try getProvidedPath(b, &path_buf, use_cwd);
+                const file_path = getProvidedPath(b, json_path, use_cwd);
 
                 if (parsers) |p| {
                     var suite = bench.Suite(name){
@@ -467,7 +491,7 @@ pub fn build(b: *std.Build) !void {
                 const name = "coordinates";
                 const bench_step = b.step("bench/" ++ name, "Run benchmark 'coordinates'");
                 const parsers = Parsers.get(b, target, optimize);
-                const file_path = try getProvidedPath(b, &path_buf, use_cwd);
+                const file_path = getProvidedPath(b, json_path, use_cwd);
 
                 if (parsers) |p| {
                     var suite = bench.Suite(name){
@@ -497,8 +521,8 @@ pub fn build(b: *std.Build) !void {
                 const parsers = Parsers.get(b, target, optimize);
                 const file_path = path: {
                     if (b.lazyDependency("simdjson-data", .{})) |dep| {
-                        break :path dep.path("jsonexamples/twitter.json").getPath(b);
-                    } else break :path "";
+                        break :path dep.path("jsonexamples/twitter.json");
+                    } else break :path b.path(".");
                 };
 
                 if (parsers) |p| {
@@ -590,13 +614,15 @@ pub fn build(b: *std.Build) !void {
             // }
             {
                 const profile_step = b.step("tools/profile", "Profile a Zig program with Tracy");
-                const file_path = try getProvidedPath(b, &path_buf, use_cwd);
+                const file_path = getProvidedPath(b, json_path, use_cwd);
 
                 const traced_zimdjson = b.createModule(.{
                     .root_source_file = b.path("src/zimdjson.zig"),
                     .target = target,
                     .optimize = optimize,
+                    .link_libc = true,
                 });
+                traced_zimdjson.addImport("build_options", build_options.createModule());
 
                 const tracy_options = b.addOptions();
                 tracy_options.addOption(bool, "enable_tracy", true);
@@ -624,15 +650,16 @@ pub fn build(b: *std.Build) !void {
 
                 profile.root_module.addImport("zimdjson", traced_zimdjson);
                 profile.root_module.addImport("tracy", tracy_module);
+                b.step("tools/profile/check", "Compile the Tracy profile tool").dependOn(&profile.step);
 
                 const run_profile = b.addRunArtifact(profile);
-                run_profile.addArg(file_path);
+                run_profile.addFileArg(file_path);
                 profile_step.dependOn(&run_profile.step);
             }
             {
                 const profile_step = b.step("tools/profile-cpp", "Profile a C++ program with Tracy");
                 const parsers = Parsers.get(b, target, optimize);
-                const file_path = try getProvidedPath(b, &path_buf, use_cwd);
+                const file_path = getProvidedPath(b, json_path, use_cwd);
 
                 if (parsers) |p| {
                     const profile = b.addExecutable(.{
@@ -648,15 +675,16 @@ pub fn build(b: *std.Build) !void {
                     profile.root_module.linkSystemLibrary("TracyClient", .{});
                     profile.root_module.linkLibrary(p.simdjson);
                     profile.root_module.linkLibrary(p.yyjson);
+                    b.step("tools/profile-cpp/check", "Compile the C++ Tracy profile tool").dependOn(&profile.step);
 
                     const run_profile = b.addRunArtifact(profile);
-                    run_profile.addArg(file_path);
+                    run_profile.addFileArg(file_path);
                     profile_step.dependOn(&run_profile.step);
                 }
             }
             {
                 const print_step = b.step("tools/print", "Print a parsed JSON file");
-                const file_path = try getProvidedPath(b, &path_buf, use_cwd);
+                const file_path = getProvidedPath(b, json_path, use_cwd);
 
                 const exe = b.addExecutable(.{
                     .name = "print",
@@ -668,9 +696,10 @@ pub fn build(b: *std.Build) !void {
                 });
 
                 exe.root_module.addImport("zimdjson", zimdjson);
+                b.step("tools/print/check", "Compile the JSON print tool").dependOn(&exe.step);
 
                 const run_profile = b.addRunArtifact(exe);
-                run_profile.addArg(file_path);
+                run_profile.addFileArg(file_path);
                 print_step.dependOn(&run_profile.step);
             }
         }
@@ -679,17 +708,15 @@ pub fn build(b: *std.Build) !void {
 }
 
 fn addEmbeddedPath(b: *std.Build, compile: *std.Build.Step.Compile, dep: *std.Build.Dependency, alias: []const u8) void {
-    compile.root_module.addAnonymousImport(alias, .{
-        .root_source_file = b.addWriteFiles().add(alias, dep.path(".").getPath(b)),
-    });
+    const options = b.addOptions();
+    options.addOptionPathDirectory("path", dep.path("."));
+    compile.root_module.addOptions(alias, options);
 }
 
-fn getProvidedPath(b: *std.Build, buf: []u8, use_cwd: bool) ![]const u8 {
-    const json_path = if (b.args) |args| args[0] else "";
+fn getProvidedPath(b: *std.Build, json_path: []const u8, use_cwd: bool) std.Build.LazyPath {
     if (use_cwd) {
-        const len = try std.Io.Dir.cwd().realPathFile(std.Options.debug_io, json_path, buf);
-        return buf[0..len];
+        return b.graph.cwdRelativePath(json_path);
     } else if (b.lazyDependency("simdjson-data", .{})) |dep| {
-        return b.pathJoin(&.{ dep.path("jsonexamples").getPath(b), json_path });
-    } else return "";
+        return dep.path(b.pathJoin(&.{ "jsonexamples", json_path }));
+    } else return b.path(".");
 }

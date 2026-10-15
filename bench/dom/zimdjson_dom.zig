@@ -1,4 +1,5 @@
 const std = @import("std");
+const io = std.Io.Threaded.global_single_threaded.io();
 const zimdjson = @import("zimdjson");
 const TracedAllocator = @import("TracedAllocator");
 
@@ -10,14 +11,14 @@ var size: usize = 0;
 var parser = zimdjson.dom.FullParser(.{ .assume_padding = true }).init;
 
 pub fn init(path: []const u8) !void {
-    const file = try std.fs.openFileAbsolute(path, .{});
-    defer file.close();
+    const file = try std.Io.Dir.cwd().openFile(io, path, .{});
+    defer file.close(io);
 
-    size = (try file.stat()).size;
+    size = (try file.stat(io)).size;
     json = try allocator.alloc(u8, size + zimdjson.padding);
     @memset(json[size..], ' ');
     var read_buf: [4096]u8 = undefined;
-    var file_reader = file.reader(&read_buf);
+    var file_reader = file.reader(io, &read_buf);
     // Read all bytes (equivalent to old readAll)
     var total_read: usize = 0;
     const dest = json[0..size];

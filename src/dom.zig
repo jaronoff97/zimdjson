@@ -125,7 +125,7 @@ pub fn Parser(comptime format: types.Format, comptime options: Options) type {
 
         // only used in full mode
         document_buffer: std.ArrayListAlignedUnmanaged(u8, types.Aligned(true).mem_alignment),
-        reader_error: ?std.meta.Int(.unsigned, @bitSizeOf(anyerror)),
+        reader_error: ?@Int(.unsigned, @bitSizeOf(anyerror)),
 
         tape: Tape,
 
@@ -811,9 +811,9 @@ pub fn Parser(comptime format: types.Format, comptime options: Options) type {
                 true = 't',
                 false = 'f',
                 null = 'n',
-                unsigned = @intFromEnum(Number.unsigned),
-                signed = @intFromEnum(Number.signed),
-                double = @intFromEnum(Number.double),
+                unsigned = @backingInt(Number.unsigned),
+                signed = @backingInt(Number.signed),
+                double = @backingInt(Number.double),
                 string = 's',
                 object_opening = '{',
                 object_closing = '}',
@@ -980,8 +980,8 @@ pub fn Parser(comptime format: types.Format, comptime options: Options) type {
             }
 
             inline fn appendTwoWordsAssumeCapacity(self: *Tape, words: [2]Word) void {
-                const vec: @Vector(2, u64) = @bitCast(words);
-                const slice: *const [2]u64 = &vec;
+                const raw_words: [2]u64 = @bitCast(words);
+                const slice = &raw_words;
                 if (want_stream) {
                     const arr = self.words.list.addManyAsArrayAssumeCapacity(2);
                     @memcpy(arr, slice);
@@ -1033,7 +1033,7 @@ pub fn Parser(comptime format: types.Format, comptime options: Options) type {
                                     try self.visitEmptyContainer(allocator, container_begin);
                                     continue :state .end;
                                 }
-                                continue :state @enumFromInt(container_begin);
+                                continue :state @fromBackingInt(@intCast(container_begin));
                             },
                             else => {
                                 try self.visitPrimitive(allocator, t);
@@ -1072,7 +1072,7 @@ pub fn Parser(comptime format: types.Format, comptime options: Options) type {
                                         try self.visitEmptyContainer(allocator, container_begin);
                                         continue :state .object_continue;
                                     }
-                                    continue :state @enumFromInt(container_begin);
+                                    continue :state @fromBackingInt(@intCast(container_begin));
                                 },
                                 else => {
                                     try self.visitPrimitive(allocator, t);
@@ -1115,7 +1115,7 @@ pub fn Parser(comptime format: types.Format, comptime options: Options) type {
                                     try self.visitEmptyContainer(allocator, container_begin);
                                     continue :state .array_continue;
                                 }
-                                continue :state @enumFromInt(container_begin);
+                                continue :state @fromBackingInt(@intCast(container_begin));
                             },
                             else => {
                                 try self.visitPrimitive(allocator, t);
@@ -1137,14 +1137,14 @@ pub fn Parser(comptime format: types.Format, comptime options: Options) type {
                         const scope = self.stack.getScopeData();
                         if (want_stream) try self.words.ensureUnusedCapacity(allocator, 1);
                         self.appendWordAssumeCapacity(.{
-                            .tag = @enumFromInt(@intFromEnum(tag)),
+                            .tag = @fromBackingInt(@intCast(@backingInt(tag))),
                             .data = .{
                                 .ptr = scope.ptr,
                                 .len = undefined,
                             },
                         });
                         self.words.items().ptr[scope.ptr] = @bitCast(Word{
-                            .tag = @enumFromInt(@intFromEnum(tag) - 2),
+                            .tag = @fromBackingInt(@intCast(@backingInt(tag) - 2)),
                             .data = .{
                                 .ptr = self.currentWord(),
                                 .len = @intCast(@min(scope.len, std.math.maxInt(u24))),
@@ -1156,7 +1156,7 @@ pub fn Parser(comptime format: types.Format, comptime options: Options) type {
                             continue :state .end;
                         }
                         const parent = self.stack.getScopeType();
-                        continue :state @enumFromInt(@intFromEnum(parent) + 1);
+                        continue :state @fromBackingInt(@intCast(@backingInt(parent) + 1));
                     },
                     .end => {
                         const trail = try self.tokens.next();
@@ -1208,14 +1208,14 @@ pub fn Parser(comptime format: types.Format, comptime options: Options) type {
                 const curr = self.currentWord();
                 self.appendTwoWordsAssumeCapacity(.{
                     .{
-                        .tag = @enumFromInt(tag),
+                        .tag = @fromBackingInt(@intCast(tag)),
                         .data = .{
                             .ptr = curr + 2,
                             .len = 0,
                         },
                     },
                     .{
-                        .tag = @enumFromInt(tag + 2),
+                        .tag = @fromBackingInt(@intCast(tag + 2)),
                         .data = .{
                             .ptr = curr,
                             .len = undefined,
@@ -1254,7 +1254,7 @@ pub fn Parser(comptime format: types.Format, comptime options: Options) type {
                     inline else => |n| {
                         self.appendTwoWordsAssumeCapacity(.{
                             .{
-                                .tag = @enumFromInt(@intFromEnum(number)),
+                                .tag = @fromBackingInt(@intCast(@backingInt(number))),
                                 .data = undefined,
                             },
                             @bitCast(n),

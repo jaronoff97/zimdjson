@@ -1,6 +1,6 @@
 const std = @import("std");
 const zimdjson = @import("zimdjson");
-const simdjson_data = @embedFile("simdjson-data");
+const simdjson_data = @import("simdjson-data").path;
 const allocator = std.testing.allocator;
 const Parser = zimdjson.ondemand.FullParser(.default);
 

@@ -412,9 +412,9 @@ const Utf8 = struct {
         @setEvalBranchQuota(10000);
         const prev_vec = self.prev_vec;
         const len = Vector.bytes_len;
-        const prev1_mask: @Vector(len, i32) = [_]i32{len} ++ ([_]i32{0} ** (len - 1));
-        const prev2_mask: @Vector(len, i32) = [_]i32{ len - 1, len } ++ ([_]i32{0} ** (len - 2));
-        const prev3_mask: @Vector(len, i32) = [_]i32{ len - 2, len - 1, len } ++ ([_]i32{0} ** (len - 3));
+        const prev1_mask: @Vector(len, i32) = [_]i32{len} ++ @as([len - 1]i32, @splat(0));
+        const prev2_mask: @Vector(len, i32) = [_]i32{ len - 1, len } ++ @as([len - 2]i32, @splat(0));
+        const prev3_mask: @Vector(len, i32) = [_]i32{ len - 2, len - 1, len } ++ @as([len - 3]i32, @splat(0));
         const shift1_mask = comptime simd.shiftElementsRight(simd.iota(i32, len), 1, 0) - prev1_mask;
         const shift2_mask = comptime simd.shiftElementsRight(simd.iota(i32, len), 2, 0) - prev2_mask;
         const shift3_mask = comptime simd.shiftElementsRight(simd.iota(i32, len), 3, 0) - prev3_mask;

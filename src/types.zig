@@ -22,7 +22,7 @@ pub fn Aligned(comptime aligned: bool) type {
         /// the input must be properly aligned.
         pub const alignment = if (aligned) Vector.bytes_len else @alignOf(u8);
         /// Alignment as std.mem.Alignment enum for use with ArrayListAlignedUnmanaged
-        pub const mem_alignment: ?std.mem.Alignment = if (aligned) @enumFromInt(@ctz(@as(usize, Vector.bytes_len))) else null;
+        pub const mem_alignment: ?std.mem.Alignment = if (aligned) @fromBackingInt(@intCast(@ctz(@as(usize, Vector.bytes_len)))) else null;
         pub const slice = []align(alignment) const u8;
         pub const vector = *align(alignment) const @Vector(Vector.bytes_len, u8);
         pub const vectors = [Mask.computed_vectors]@This().vector;
@@ -167,7 +167,7 @@ pub const Predicate = struct {
     const E = 8;
 
     const predicate = @Vector(L, bool);
-    const @"packed" = meta.Int(unsigned, L);
+    const @"packed" = @Int(unsigned, L);
     const unpacked = vector;
 
     pub inline fn pack(p: predicate) @"packed" {
@@ -175,8 +175,8 @@ pub const Predicate = struct {
     }
 
     pub inline fn unpack(p: predicate) unpacked {
-        return @as(@Vector(L, meta.Int(unsigned, E)), @bitCast(@as(
-            @Vector(L, meta.Int(signed, E)),
+        return @as(@Vector(L, @Int(unsigned, E)), @bitCast(@as(
+            @Vector(L, @Int(signed, E)),
             @intCast(@as(
                 @Vector(L, i1),
                 @bitCast(

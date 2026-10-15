@@ -1,4 +1,5 @@
 const std = @import("std");
+const io = std.Io.Threaded.global_single_threaded.io();
 const zimdjson = @import("zimdjson");
 const TracedAllocator = @import("TracedAllocator");
 const Parser = zimdjson.ondemand.FullParser(.default);
@@ -12,9 +13,7 @@ var doc: std.json.Parsed(Schema) = undefined;
 var parser = Parser.init;
 
 pub fn init(path: []const u8) !void {
-    const file = try std.fs.openFileAbsolute(path, .{});
-    defer file.close();
-    json = try file.readToEndAlloc(allocator, std.math.maxInt(u32));
+    json = try std.Io.Dir.cwd().readFileAlloc(io, path, allocator, .limited(std.math.maxInt(u32)));
 }
 
 pub fn prerun() !void {}

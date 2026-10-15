@@ -4,20 +4,19 @@ const tracy = @import("tracy");
 const dom = zimdjson.dom;
 const ondemand = zimdjson.ondemand;
 
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
     const allocator = std.heap.c_allocator;
-    const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
+    const args = try init.minimal.args.toSlice(init.arena.allocator());
 
     const path = args[1];
 
-    var parser = dom.parserFromFile(.default).init(allocator);
-    defer parser.deinit();
+    var parser = dom.FullParser(.default).init;
+    defer parser.deinit(allocator);
 
-    const file = try std.fs.openFileAbsolute(path, .{});
-    defer file.close();
+    const file = try std.Io.Dir.cwd().openFile(init.io, path, .{});
+    defer file.close(init.io);
 
-    try parser.ensureTotalCapacity((try file.stat()).size);
-
-    _ = try parser.parseAssumeCapacity(file.reader());
+    var read_buf: [4096]u8 = undefined;
+    var file_reader = file.reader(init.io, &read_buf);
+    _ = try parser.parseFromReader(allocator, &file_reader.interface);
 }

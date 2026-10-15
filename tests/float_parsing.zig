@@ -1,6 +1,6 @@
 const std = @import("std");
 const ondemand = @import("zimdjson").ondemand;
-const parse_number_fxx = @embedFile("parse_number_fxx");
+const parse_number_fxx = @import("parse_number_fxx").path;
 
 fn testFrom(comptime set: []const u8) !void {
     // std.debug.print("START:   {s}\n", .{set});
@@ -8,13 +8,13 @@ fn testFrom(comptime set: []const u8) !void {
     const allocator = std.testing.allocator;
     var parser = ondemand.FullParser(.default).init;
     defer parser.deinit(allocator);
-    const file = try std.fs.cwd().openFile(path, .{});
-    defer file.close();
+    const file = try std.Io.Dir.cwd().openFile(std.testing.io, path, .{});
+    defer file.close(std.testing.io);
     var read_buf: [4096]u8 = undefined;
-    var file_reader = file.reader(&read_buf);
+    var file_reader = file.reader(std.testing.io, &read_buf);
     const reader = &file_reader.interface;
     var i: usize = 1;
-    while (reader.takeDelimiterExclusive('\n')) |line| : (i += 1) {
+    while (try reader.takeDelimiter('\n')) |line| : (i += 1) {
         const expected = line[4 + 8 + 2 ..][0..16];
         var actual_buf: [16]u8 = undefined;
         const str = line[4 + 8 + 16 + 3 ..];
@@ -32,9 +32,6 @@ fn testFrom(comptime set: []const u8) !void {
             std.debug.print("FAIL: {} {s}\n", .{ i, str });
             @breakpoint();
         };
-    } else |err| switch (err) {
-        error.EndOfStream => {},
-        else => return err,
     }
     // std.debug.print("END:     {s}\n\n", .{set});
 }

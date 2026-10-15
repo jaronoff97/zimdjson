@@ -48,7 +48,7 @@ if '--run' in flags:
             subprocess.run("zig build bench/" + bench + " --release=fast", shell=True)
     for bench in elite_benchmarks:
         for i in range(0, 2): # warmup
-            subprocess.run("zig build bench/" + bench + " --release=fast -Duse-cwd -- " + large_file_path, shell=True)
+            subprocess.run("zig build bench/" + bench + " --release=fast -Duse-cwd -Dfile=" + large_file_path, shell=True)
 
 def suite_dataframe(suite, name):
     json = pd.read_json('bench/' + suite + '/results/' + name + '.json')

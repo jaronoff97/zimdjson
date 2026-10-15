@@ -2,17 +2,16 @@ const std = @import("std");
 const zimdjson = @import("zimdjson");
 const Parser = zimdjson.ondemand.StreamParser(.default);
 
-var gpa = std.heap.GeneralPurposeAllocator(.{}).init;
+var gpa = std.heap.DebugAllocator(.{}).init;
 const allocator = gpa.allocator();
 
-var buf = std.io.bufferedWriter(std.io.getStdOut().writer());
-var w = buf.writer();
+var w: *std.Io.Writer = undefined;
 
 var depth: usize = 0;
 
 fn printDepth() !void {
     try w.writeByte('\n');
-    try w.writeBytesNTimes("  ", depth);
+    for (0..depth) |_| try w.writeAll("  ");
 }
 
 fn walk(v: Parser.Value) !void {
@@ -54,19 +53,24 @@ fn walk(v: Parser.Value) !void {
     }
 }
 
-pub fn main() !void {
-    const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
+pub fn main(init: std.process.Init) !void {
+    defer _ = gpa.deinit();
+    const args = try init.minimal.args.toSlice(init.arena.allocator());
 
     if (args.len == 1) return;
 
+    var write_buf: [4096]u8 = undefined;
+    var output = std.Io.File.stdout().writer(init.io, &write_buf);
+    w = &output.interface;
     var parser = Parser.init;
     defer parser.deinit(allocator);
 
-    const file = try std.fs.openFileAbsolute(args[1], .{});
-    defer file.close();
+    const file = try std.Io.Dir.cwd().openFile(init.io, args[1], .{});
+    defer file.close(init.io);
 
-    const json = try parser.parseFromReader(allocator, file.reader().any());
+    var read_buf: [4096]u8 = undefined;
+    var file_reader = file.reader(init.io, &read_buf);
+    const json = try parser.parseFromReader(allocator, &file_reader.interface);
     try walk(json.asValue());
-    try buf.flush();
+    try w.flush();
 }

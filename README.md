@@ -33,18 +33,17 @@ Then execute the following:
 const std = @import("std");
 const zimdjson = @import("zimdjson");
 
-pub fn main() !void {
-    var gpa: std.heap.GeneralPurposeAllocator(.{}) = .init;
-    const allocator = gpa.allocator();
+pub fn main(init: std.process.Init) !void {
+    const allocator = init.gpa;
 
     var parser = zimdjson.ondemand.StreamParser(.default).init;
     defer parser.deinit(allocator);
 
-    const file = try std.fs.cwd().openFile("twitter.json", .{});
-    defer file.close();
+    const file = try std.Io.Dir.cwd().openFile(init.io, "twitter.json", .{});
+    defer file.close(init.io);
 
     var read_buf: [4096]u8 = undefined;
-    var file_reader = file.reader(&read_buf);
+    var file_reader = file.reader(init.io, &read_buf);
     const document = try parser.parseFromReader(allocator, &file_reader.interface);
 
     const metadata_count = try document.at("search_metadata").at("count").asUnsigned();
@@ -61,6 +60,47 @@ pub fn main() !void {
 To see how the streaming parser above handles multi-gigabyte JSON documents with minimal memory usage, download one of [these dumps](https://www.edsm.net/en/nightly-dumps) or play it with a file of your choice.
 
 ## Requirements
+
+This fork requires Zig 0.17.0.
+The runtime port reuses the Edge port of upstream commit `6199cafec64280fcd9fd1df70b52809fc5a70052`.
+The fork retains its full build, benchmarks, tools, optional Tracy support, and external test data.
+
+Zig 0.17.0's default x86_64 debug backend rejects the parser's SIMD instructions.
+It reports `InvalidInstruction` for `vpclmulqdq` and `vpmaddubsw`.
+Use LLVM for tests on x86_64:
+
+```sh
+zig build tests -Dllvm=true
+zig build tests/check -Dtarget=x86_64-linux -Dllvm=true
+```
+
+The second command compiles all suites without execution.
+The `test` and `test/check` steps select the standalone module tests.
+The `tests` step also runs the external suites.
+The schema suite skips the `std.SegmentedList` test because Zig 0.17 removed that container.
+
+Use `-Dfile=...` instead of arguments after `--` for tools and benchmarks:
+
+```sh
+zig build tools/print -Dfile=small/demo.json
+zig build bench/dom -Dfile=twitter.json --release=fast
+zig build tools/print -Duse-cwd -Dfile=/absolute/path/to/document.json
+zig build bench/schema/check
+zig build tools/profile/check
+zig fmt --check build.zig build.zig.zon src build bench tools tests
+```
+
+Each `bench/<suite>/check` step compiles that suite without execution.
+The tool steps `tools/print/check`, `tools/profile/check`, and `tools/profile-cpp/check` also compile without execution.
+The profile tools require the system `TracyClient` library.
+The schema benchmark uses Cargo and the existing lock files.
+The native debug index benchmark triggers a sanitizer failure in the external simdjson library's `__builtin_clzll(0)` call.
+The same benchmark completes with `--release=fast`.
+
+The Nix shell still selects Zig 0.14.0 and does not support this port.
+Its locked overlay lacks Zig 0.17.0.
+Overlay revision `290ee50a903c5a301ebc71b7c94491f0db7d6917` lists Zig 0.17.0.
+Update and verify the Nix inputs and lock file on a host with Nix.
 
 Currently, targets with Linux, Windows, or macOS operating systems and CPUs with SIMD capabilities are supported. Missing targets can be added by contributing.
 
@@ -82,9 +122,8 @@ const Film = struct {
     characters: []const []const u8, // we could also use std.ArrayListUnmanaged([]const u8)
 };
 
-pub fn main() !void {
-    var gpa: std.heap.GeneralPurposeAllocator(.{}) = .init;
-    const allocator = gpa.allocator();
+pub fn main(init: std.process.Init) !void {
+    const allocator = init.gpa;
 
     var parser = zimdjson.ondemand.FullParser(.default).init;
     defer parser.deinit(allocator);

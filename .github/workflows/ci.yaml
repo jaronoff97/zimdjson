@@ -6,7 +6,7 @@ on:
       - main
 
 env:
-  ZIG_VERSION: 0.14.0
+  ZIG_VERSION: 0.17.0
 
 jobs:
   test:
@@ -25,17 +25,23 @@ jobs:
           version: ${{ env.ZIG_VERSION }}
 
       - name: Run test suite 'minefield'
-        run: zig build tests/minefield
+        run: zig build tests/minefield -Dllvm=true
       - name: Run test suite 'adversarial'
-        run: zig build tests/adversarial
+        run: zig build tests/adversarial -Dllvm=true
       - name: Run test suite 'examples'
-        run: zig build tests/examples
+        run: zig build tests/examples -Dllvm=true
       - name: Run test suite 'ondemand'
-        run: zig build tests/ondemand
+        run: zig build tests/ondemand -Dllvm=true
       - name: Run test suite 'schema'
-        run: zig build tests/schema
+        run: zig build tests/schema -Dllvm=true
       - name: Run test suite 'float parsing'
-        run: zig build tests/float-parsing
+        run: zig build tests/float-parsing -Dllvm=true
+
+      - name: Run module and ring-buffer tests
+        run: zig build test tests/ring-buffer -Dllvm=true
+
+      - name: Check format
+        run: zig fmt --check build.zig build.zig.zon src build bench tools tests
 
   docs:
     name: Deploy documentation

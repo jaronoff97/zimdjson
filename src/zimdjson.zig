@@ -42,5 +42,38 @@ pub const alignment = types.Aligned(true).alignment;
 pub const padding = std.simd.suggestVectorLength(u8) orelse @compileError("No SIMD features available");
 
 test {
-    std.testing.refAllDeclsRecursive(@This());
+    std.testing.refAllDecls(@This());
+}
+
+test "reader parsers" {
+    inline for (.{ dom.FullParser(.default), dom.StreamParser(.default), ondemand.FullParser(.default), ondemand.StreamParser(.default) }) |Parser| {
+        var parser = Parser.init;
+        defer parser.deinit(std.testing.allocator);
+        var reader = std.Io.Reader.fixed("{\"value\":42}");
+        const document = try parser.parseFromReader(std.testing.allocator, &reader);
+        try std.testing.expectEqual(42, try document.at("value").asUnsigned());
+    }
+}
+
+test "on-demand schema" {
+    const Record = struct { value: u64, name: []const u8, enabled: bool = true };
+    var parser = ondemand.FullParser(.default).init;
+    defer parser.deinit(std.testing.allocator);
+    const document = try parser.parseFromSlice(std.testing.allocator, "{\"value\":42,\"name\":\"Edge\"}");
+    const record = try document.asLeaky(Record, std.testing.allocator, .{});
+    try std.testing.expectEqual(42, record.value);
+    try std.testing.expectEqualStrings("Edge", record.name);
+    try std.testing.expect(record.enabled);
+}
+
+test "on-demand enum and union schemas" {
+    const State = enum { ready, stopped };
+    const Payload = union(enum) { value: u64, name: []const u8 };
+    var parser = ondemand.FullParser(.default).init;
+    defer parser.deinit(std.testing.allocator);
+    const state_document = try parser.parseFromSlice(std.testing.allocator, "\"ready\"");
+    try std.testing.expectEqual(State.ready, try state_document.asLeaky(State, null, .{}));
+    const payload_document = try parser.parseFromSlice(std.testing.allocator, "{\"value\":42}");
+    const payload = try payload_document.asLeaky(Payload, null, .{});
+    try std.testing.expectEqual(42, payload.value);
 }

@@ -116,7 +116,7 @@ inline fn parseHexDword(src: [*]const u8) u32 {
 const hex_err_code: u32 = 0xFFFFFFFF;
 const hex_digit_map: [0xD0 * 3 + 256]u32 = init: {
     @setEvalBranchQuota(5000);
-    const prefix = [_]u32{hex_err_code} ** 0x30;
+    const prefix: [0x30]u32 = @splat(hex_err_code);
     var chunk1: [256 - 0x30]u32 = undefined;
     var chunk2: [256 - 0x30]u32 = undefined;
     var chunk3: [256 - 0x30]u32 = undefined;

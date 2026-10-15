@@ -13,7 +13,7 @@ pub fn Suite(comptime suite: []const u8) type {
         zimdjson: *std.Build.Module,
         simdjson: *std.Build.Step.Compile,
         target: std.Build.ResolvedTarget,
-        optimize: std.builtin.OptimizeMode,
+        optimize: std.builtin.Optimize,
         traced_alloc: ?*std.Build.Module = null,
 
         pub fn addZigBenchmark(
@@ -102,8 +102,8 @@ pub fn Suite(comptime suite: []const u8) type {
             const b = self.zimdjson.owner;
             const identifier = self.suite ++ "_" ++ name;
             const dir = "bench/" ++ self.suite ++ "/" ++ name;
-            const cargo = b.addSystemCommand(&.{ "cargo", "-Z", "unstable-options", "-C", dir, "build" });
-            if (b.release_mode != .off) {
+            const cargo = b.addSystemCommand(&.{ "cargo", "build", "--manifest-path", dir ++ "/Cargo.toml", "--locked" });
+            if (self.optimize != .debug) {
                 cargo.addArg("-r");
             }
             const write_wrapper = b.addWriteFiles();
@@ -115,7 +115,7 @@ pub fn Suite(comptime suite: []const u8) type {
             });
             mod.linkSystemLibrary(identifier, .{});
             mod.addIncludePath(b.addWriteFiles().add(identifier ++ ".h", formatTemplateHeader(name)).dirname());
-            if (b.release_mode != .off) {
+            if (self.optimize != .debug) {
                 mod.addLibraryPath(b.path(dir ++ "/target/release"));
             } else {
                 mod.addLibraryPath(b.path(dir ++ "/target/debug"));
@@ -126,7 +126,7 @@ pub fn Suite(comptime suite: []const u8) type {
         pub fn create(
             self: Self,
             benchs: []const Benchmark,
-            file_path: []const u8,
+            file_path: std.Build.LazyPath,
         ) *std.Build.Step.Run {
             const b = self.zimdjson.owner;
             var backing: [1024]u8 = undefined;
@@ -153,8 +153,9 @@ pub fn Suite(comptime suite: []const u8) type {
             });
             runner.root_module.link_libcpp = true;
             runner.root_module.addImport("benchmarks", mod);
+            b.step("bench/" ++ suite ++ "/check", "Compile benchmark '" ++ suite ++ "'").dependOn(&runner.step);
             const artifact = b.addRunArtifact(runner);
-            artifact.addArg(file_path);
+            artifact.addFileArg(file_path);
             return artifact;
         }
     };
@@ -173,10 +174,18 @@ inline fn formatTemplateHeader(comptime name: []const u8) []const u8 {
 }
 
 inline fn formatWrapper(comptime header: []const u8, comptime name: []const u8) []const u8 {
+    _ = header;
     return std.fmt.comptimePrint(
-        \\const c = @cImport({{ @cInclude("{[header]s}.h"); }});
+        \\const c = struct {{
+        \\    extern fn {[id]s}__init(ptr: [*]const u8, len: usize) void;
+        \\    extern fn {[id]s}__prerun() void;
+        \\    extern fn {[id]s}__run() void;
+        \\    extern fn {[id]s}__postrun() void;
+        \\    extern fn {[id]s}__deinit() void;
+        \\    extern fn {[id]s}__memusage() usize;
+        \\}};
         \\
-        \\pub fn init(slice: []u8) !void {{
+        \\pub fn init(slice: []const u8) !void {{
         \\    return c.{[id]s}__init(@ptrCast(slice.ptr), slice.len);
         \\}}
         \\
@@ -199,7 +208,7 @@ inline fn formatWrapper(comptime header: []const u8, comptime name: []const u8) 
         \\pub fn memusage() usize {{
         \\    return c.{[id]s}__memusage();
         \\}}
-    , .{ .header = header, .id = name });
+    , .{ .id = name });
 }
 
 fn formatWrappers(content: *std.ArrayListUnmanaged(u8), benchmarks: []const Benchmark) []const u8 {

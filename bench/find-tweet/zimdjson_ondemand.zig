@@ -1,15 +1,16 @@
 const std = @import("std");
+const io = std.Io.Threaded.global_single_threaded.io();
 const zimdjson = @import("zimdjson");
 const TracedAllocator = @import("TracedAllocator");
 
 const find_id = 505874901689851904;
 const expected = "RT @shiawaseomamori: 一に止まると書いて、正しいという意味だなんて、この年になるまで知りませんでした。 人は生きていると、前へ前へという気持ちばかり急いて、どんどん大切なものを置き去りにしていくものでしょう。本当に正しいことというのは、一番初めの場所にあるの…";
 
-var gpa = std.heap.GeneralPurposeAllocator(.{}).init;
+var gpa = std.heap.DebugAllocator(.{}).init;
 var traced = TracedAllocator{ .wrapped = gpa.allocator() };
 const allocator = traced.allocator();
 
-var file: std.fs.File = undefined;
+var file: std.Io.File = undefined;
 var read_buf: [4096]u8 = undefined;
 var path: []const u8 = undefined;
 var parser = zimdjson.ondemand.FullParser(.default).init;
@@ -22,9 +23,9 @@ pub fn init(_path: []const u8) !void {
 pub fn prerun() !void {}
 
 pub fn run() !void {
-    file = try std.fs.openFileAbsolute(path, .{});
-    try parser.expectDocumentSize(allocator, (try file.stat()).size);
-    var file_reader = file.reader(&read_buf);
+    file = try std.Io.Dir.cwd().openFile(io, path, .{});
+    try parser.expectDocumentSize(allocator, (try file.stat(io)).size);
+    var file_reader = file.reader(io, &read_buf);
     const doc = try parser.parseFromReader(allocator, &file_reader.interface);
     var tweet = (try doc.at("statuses").asArray()).iterator();
     while (try tweet.next()) |t| {
@@ -40,7 +41,7 @@ pub fn postrun() !void {
     if (!std.mem.eql(u8, expected, result)) {
         @panic("tweet text unequal to expected");
     }
-    file.close();
+    file.close(io);
 }
 
 pub fn deinit() void {

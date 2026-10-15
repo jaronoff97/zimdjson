@@ -53,7 +53,7 @@ pub fn Stream(comptime options: Options) type {
         };
 
         reader: *std.Io.Reader = undefined,
-        reader_error: ?std.meta.Int(.unsigned, @bitSizeOf(anyerror)),
+        reader_error: ?@Int(.unsigned, @bitSizeOf(anyerror)),
 
         document: RingBuffer(u8, chunk_len * options.slots) = undefined,
         indexes: RingBuffer(index_type, chunk_len * options.slots) = undefined,
@@ -196,7 +196,7 @@ pub fn Stream(comptime options: Options) type {
                     // skip to the next slot
                     @memset(buf[read..chunk_len], ' ');
                 } else {
-                    const padding = bogus_indexed_tokens ++ (" " ** (types.block_len - bogus_indexed_tokens.len));
+                    const padding = bogus_indexed_tokens ++ @as([types.block_len - bogus_indexed_tokens.len]u8, @splat(' '));
                     const len = @min(types.block_len, chunk_len - read);
                     @memcpy(buf[read..][0..len], padding[0..len]);
 

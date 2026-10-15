@@ -1,6 +1,6 @@
 const std = @import("std");
 const zimdjson = @import("zimdjson");
-const simdjson_data = @embedFile("simdjson-data");
+const simdjson_data = @import("simdjson-data").path;
 const Parser = zimdjson.ondemand.FullParser(.default);
 const allocator = std.testing.allocator;
 
@@ -9,10 +9,10 @@ const allocator = std.testing.allocator;
 test "small/demo" {
     var parser = Parser.init;
     defer parser.deinit(allocator);
-    const file = try std.fs.cwd().openFile(simdjson_data ++ "/jsonexamples/small/demo.json", .{});
-    defer file.close();
+    const file = try std.Io.Dir.cwd().openFile(std.testing.io, simdjson_data ++ "/jsonexamples/small/demo.json", .{});
+    defer file.close(std.testing.io);
     var read_buf: [4096]u8 = undefined;
-    var file_reader = file.reader(&read_buf);
+    var file_reader = file.reader(std.testing.io, &read_buf);
     const document = try parser.parseFromReader(allocator, &file_reader.interface);
 
     const Image = struct {
@@ -110,10 +110,10 @@ test "small/demo2" {
 test "small/adversarial" {
     var parser = Parser.init;
     defer parser.deinit(allocator);
-    const file = try std.fs.cwd().openFile(simdjson_data ++ "/jsonexamples/small/adversarial.json", .{});
-    defer file.close();
+    const file = try std.Io.Dir.cwd().openFile(std.testing.io, simdjson_data ++ "/jsonexamples/small/adversarial.json", .{});
+    defer file.close(std.testing.io);
     var read_buf: [4096]u8 = undefined;
-    var file_reader = file.reader(&read_buf);
+    var file_reader = file.reader(std.testing.io, &read_buf);
     const document = try parser.parseFromReader(allocator, &file_reader.interface);
 
     const Schema = struct {
@@ -141,10 +141,10 @@ test "small/adversarial" {
 test "small/truenull" {
     var parser = Parser.init;
     defer parser.deinit(allocator);
-    const file = try std.fs.cwd().openFile(simdjson_data ++ "/jsonexamples/small/truenull.json", .{});
-    defer file.close();
+    const file = try std.Io.Dir.cwd().openFile(std.testing.io, simdjson_data ++ "/jsonexamples/small/truenull.json", .{});
+    defer file.close(std.testing.io);
     var read_buf: [4096]u8 = undefined;
-    var file_reader = file.reader(&read_buf);
+    var file_reader = file.reader(std.testing.io, &read_buf);
     const document = try parser.parseFromReader(allocator, &file_reader.interface);
 
     const arr = try document.as([]const ?bool, allocator, .{});
@@ -158,10 +158,10 @@ test "small/truenull" {
 test "github_events" {
     var parser = Parser.init;
     defer parser.deinit(allocator);
-    const file = try std.fs.cwd().openFile(simdjson_data ++ "/jsonexamples/github_events.json", .{});
-    defer file.close();
+    const file = try std.Io.Dir.cwd().openFile(std.testing.io, simdjson_data ++ "/jsonexamples/github_events.json", .{});
+    defer file.close(std.testing.io);
     var read_buf: [4096]u8 = undefined;
-    var file_reader = file.reader(&read_buf);
+    var file_reader = file.reader(std.testing.io, &read_buf);
     const document = try parser.parseFromReader(allocator, &file_reader.interface);
 
     const Event = union(enum) {
@@ -221,10 +221,10 @@ test "github_events" {
 test "github_events untagged payload" {
     var parser = Parser.init;
     defer parser.deinit(allocator);
-    const file = try std.fs.cwd().openFile(simdjson_data ++ "/jsonexamples/github_events.json", .{});
-    defer file.close();
+    const file = try std.Io.Dir.cwd().openFile(std.testing.io, simdjson_data ++ "/jsonexamples/github_events.json", .{});
+    defer file.close(std.testing.io);
     var read_buf: [4096]u8 = undefined;
-    var file_reader = file.reader(&read_buf);
+    var file_reader = file.reader(std.testing.io, &read_buf);
     const document = try parser.parseFromReader(allocator, &file_reader.interface);
 
     const Payload = union(enum) {
@@ -836,6 +836,8 @@ test "std.EnumMap" {
 }
 
 test "std.SegmentedList" {
+    // Zig 0.17 removed this standard-library container.
+    if (!@hasDecl(std, "SegmentedList")) return error.SkipZigTest;
     var parser = Parser.init;
     defer parser.deinit(allocator);
     const document = try parser.parseFromSlice(allocator,

@@ -23,6 +23,7 @@
 // THE SOFTWARE.
 
 const std = @import("std");
+const io = std.Io.Threaded.global_single_threaded.io();
 const builtin = @import("builtin");
 const is_linux = builtin.os.tag == .linux;
 const PERF = if (is_linux) std.os.linux.PERF else void;
@@ -65,7 +66,7 @@ const perf_measurements = if (is_linux) [_]PerfMeasurement{
 };
 
 const Events = struct {
-    init: *const fn ([]u8) anyerror!void,
+    init: *const fn ([]const u8) anyerror!void,
     prerun: *const fn () anyerror!void,
     run: *const fn () anyerror!void,
     postrun: *const fn () anyerror!void,
@@ -120,25 +121,26 @@ const ColorMode = enum {
     ansi,
 };
 
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
     var arena_instance = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena_instance.deinit();
     const arena = arena_instance.allocator();
 
-    const stdout = std.fs.File.stdout();
+    const stdout = std.Io.File.stdout();
     var write_buf: [4096]u8 = undefined;
-    var file_writer = stdout.writer(&write_buf);
+    var file_writer = stdout.writer(io, &write_buf);
     const stdout_w = &file_writer.interface;
 
     var commands: [benchmarks.wrappers.len]Command = undefined;
     const max_nano_seconds: u64 = std.time.ns_per_s * 10;
     const color: ColorMode = .auto;
 
-    const args = try std.process.argsAlloc(arena);
+    const args = try init.minimal.args.toSlice(arena);
     const path = args[1];
 
-    const file = try std.fs.openFileAbsolute(path, .{});
-    const file_stat = try file.stat();
+    const file = try std.Io.Dir.cwd().openFile(io, path, .{});
+    defer file.close(io);
+    const file_stat = try file.stat(io);
     const file_size = file_stat.size;
 
     inline for (&commands, benchmarks.wrappers, 0..) |*c, b, i| {
@@ -159,26 +161,27 @@ pub fn main() !void {
 
     var bar = try progress.ProgressBar.init(arena, stdout);
 
-    const tty_conf: std.io.tty.Config = switch (color) {
-        .auto => std.io.tty.detectConfig(stdout),
+    const tty_mode: std.Io.Terminal.Mode = switch (color) {
+        .auto => try .detect(io, stdout, false, false),
         .never => .no_color,
         .ansi => .escape_codes,
     };
+    const tty_conf: std.Io.Terminal = .{ .writer = stdout_w, .mode = tty_mode };
 
     try stdout_w.writeAll("Benchmarking JSON Document ");
-    try tty_conf.setColor(stdout_w, .bold);
+    try tty_conf.setColor(.bold);
     try stdout_w.writeAll(std.fs.path.basename(path));
-    try tty_conf.setColor(stdout_w, .reset);
+    try tty_conf.setColor(.reset);
     try stdout_w.writeAll(" of size ");
-    try tty_conf.setColor(stdout_w, .bold);
+    try tty_conf.setColor(.bold);
     try printUnit(stdout_w, @floatFromInt(file_size), .bytes, 0, false, false);
     try stdout_w.writeAll("\n");
-    try tty_conf.setColor(stdout_w, .reset);
+    try tty_conf.setColor(.reset);
 
-    var perf_fds = [1]fd_t{-1} ** perf_measurements.len;
-    var perf_ids = [1]u64{0} ** perf_measurements.len;
+    var perf_fds: [perf_measurements.len]fd_t = @splat(-1);
+    var perf_ids: [perf_measurements.len]u64 = @splat(0);
     defer for (&perf_fds) |*perf_fd| {
-        if (perf_fd.* != -1) std.posix.close(perf_fd.*);
+        if (perf_fd.* != -1) _ = std.c.close(perf_fd.*);
     };
 
     if (is_linux) {
@@ -186,7 +189,7 @@ pub fn main() !void {
         for (perf_measurements, &perf_fds, &perf_ids) |measurement, *perf_fd, *perf_id| {
             var attr: std.os.linux.perf_event_attr = .{
                 .type = PERF.TYPE.HARDWARE,
-                .config = @intFromEnum(measurement.config),
+                .config = @backingInt(measurement.config),
                 .flags = .{
                     .disabled = true,
                     .exclude_kernel = true,
@@ -204,22 +207,20 @@ pub fn main() !void {
 
     var samples_buf: [MAX_SAMPLES]Sample = undefined;
 
-    var timer = std.time.Timer.start() catch @panic("need timer to work");
-
     for (&commands, 1..) |*command, i| {
         const min_samples = 3;
 
         try @call(.never_inline, command.events.init, .{path});
         defer @call(.never_inline, command.events.deinit, .{});
 
-        const first_start = timer.read();
+        const first_start = std.Io.Clock.awake.now(io);
         var sample_index: usize = 0;
         var mem_allocated: u64 = 0;
         while ((sample_index < min_samples or
-            (timer.read() - first_start) < max_nano_seconds) and
+            first_start.durationTo(std.Io.Clock.awake.now(io)).nanoseconds < max_nano_seconds) and
             sample_index < samples_buf.len) : (sample_index += 1)
         {
-            if (tty_conf != .no_color) try bar.render();
+            if (tty_mode != .no_color) try bar.render();
 
             try @call(.never_inline, command.events.prerun, .{});
 
@@ -228,11 +229,11 @@ pub fn main() !void {
                 _ = std.os.linux.ioctl(perf_fds[0], PERF.EVENT_IOC.ENABLE, PERF.IOC_FLAG_GROUP);
             }
 
-            const start = timer.read();
+            const start = std.Io.Clock.awake.now(io);
 
             try @call(.never_inline, command.events.run, .{});
 
-            const end = timer.read();
+            const elapsed: u64 = @intCast(start.durationTo(std.Io.Clock.awake.now(io)).nanoseconds);
 
             if (is_linux) {
                 _ = std.os.linux.ioctl(perf_fds[0], PERF.EVENT_IOC.DISABLE, PERF.IOC_FLAG_GROUP);
@@ -246,8 +247,8 @@ pub fn main() !void {
                 const format = readPerfFd(perf_fds[0]);
 
                 samples_buf[sample_index] = .{
-                    .throughput = file_size * 1000_000_000 / (end - start),
-                    .wall_time = end - start,
+                    .throughput = file_size * 1000_000_000 / elapsed,
+                    .wall_time = elapsed,
                     .mem_allocated = mem_allocated,
                     .cpu_cycles = format.values[0].value,
                     .instructions = format.values[1].value,
@@ -257,8 +258,8 @@ pub fn main() !void {
                 };
             } else {
                 samples_buf[sample_index] = .{
-                    .throughput = file_size * 1000_000_000 / (end - start),
-                    .wall_time = end - start,
+                    .throughput = file_size * 1000_000_000 / elapsed,
+                    .wall_time = elapsed,
                     .mem_allocated = mem_allocated,
                     .cpu_cycles = 0,
                     .instructions = 0,
@@ -268,10 +269,10 @@ pub fn main() !void {
                 };
             }
 
-            if (tty_conf != .no_color) {
+            if (tty_mode != .no_color) {
                 bar.estimate = est_total: {
                     const cur_samples: u64 = sample_index + 1;
-                    const ns_per_sample = (timer.read() - first_start) / cur_samples;
+                    const ns_per_sample = @as(u64, @intCast(first_start.durationTo(std.Io.Clock.awake.now(io)).nanoseconds)) / cur_samples;
                     const estimate = std.math.divCeil(u64, max_nano_seconds, ns_per_sample) catch unreachable;
                     break :est_total @intCast(@min(MAX_SAMPLES, @max(cur_samples, estimate, min_samples)));
                 };
@@ -279,7 +280,7 @@ pub fn main() !void {
             }
         }
 
-        if (tty_conf != .no_color) {
+        if (tty_mode != .no_color) {
             // reset bar for next command
             try bar.clear();
             bar.current = 0;
@@ -301,60 +302,60 @@ pub fn main() !void {
         command.sample_count = all_samples.len;
 
         {
-            try tty_conf.setColor(stdout_w, .bold);
+            try tty_conf.setColor(.bold);
             try stdout_w.print("Benchmark {d}", .{i});
-            try tty_conf.setColor(stdout_w, .dim);
+            try tty_conf.setColor(.dim);
             try stdout_w.print(" ({d} runs)", .{command.sample_count});
-            try tty_conf.setColor(stdout_w, .reset);
+            try tty_conf.setColor(.reset);
             try stdout_w.writeAll(":");
             try stdout_w.print(" {s} ", .{command.name});
             try stdout_w.writeAll("\n");
 
-            try tty_conf.setColor(stdout_w, .bold);
+            try tty_conf.setColor(.bold);
             try stdout_w.writeAll("  measurement");
             try writeByteNTimes(stdout_w, ' ', 25 - "  measurement".len);
-            try tty_conf.setColor(stdout_w, .bright_green);
+            try tty_conf.setColor(.bright_green);
             try stdout_w.writeAll("mean");
-            try tty_conf.setColor(stdout_w, .reset);
-            try tty_conf.setColor(stdout_w, .bold);
+            try tty_conf.setColor(.reset);
+            try tty_conf.setColor(.bold);
             try stdout_w.writeAll(" ± ");
-            try tty_conf.setColor(stdout_w, .green);
+            try tty_conf.setColor(.green);
             try stdout_w.writeAll("σ");
-            try tty_conf.setColor(stdout_w, .reset);
+            try tty_conf.setColor(.reset);
 
-            try tty_conf.setColor(stdout_w, .bold);
+            try tty_conf.setColor(.bold);
             try writeByteNTimes(stdout_w, ' ', 14);
-            try tty_conf.setColor(stdout_w, .cyan);
+            try tty_conf.setColor(.cyan);
             try stdout_w.writeAll("min");
-            try tty_conf.setColor(stdout_w, .reset);
-            try tty_conf.setColor(stdout_w, .bold);
+            try tty_conf.setColor(.reset);
+            try tty_conf.setColor(.bold);
             try stdout_w.writeAll(" … ");
-            try tty_conf.setColor(stdout_w, .magenta);
+            try tty_conf.setColor(.magenta);
             try stdout_w.writeAll("max");
-            try tty_conf.setColor(stdout_w, .reset);
+            try tty_conf.setColor(.reset);
 
-            try tty_conf.setColor(stdout_w, .bold);
+            try tty_conf.setColor(.bold);
             try writeByteNTimes(stdout_w, ' ', 20 - " outliers".len);
-            try tty_conf.setColor(stdout_w, .bright_yellow);
+            try tty_conf.setColor(.bright_yellow);
             try stdout_w.writeAll("outliers");
-            try tty_conf.setColor(stdout_w, .reset);
+            try tty_conf.setColor(.reset);
 
             if (commands.len >= 2) {
-                try tty_conf.setColor(stdout_w, .bold);
+                try tty_conf.setColor(.bold);
                 try writeByteNTimes(stdout_w, ' ', 9);
                 try stdout_w.writeAll("delta");
-                try tty_conf.setColor(stdout_w, .reset);
+                try tty_conf.setColor(.reset);
             }
 
             try stdout_w.writeAll("\n");
 
-            inline for (@typeInfo(Command.Measurements).@"struct".fields) |field| {
-                const measurement = @field(command.measurements, field.name);
+            inline for (@typeInfo(Command.Measurements).@"struct".field_names) |field_name| {
+                const measurement = @field(command.measurements, field_name);
                 const first_measurement = if (i == 1)
                     null
                 else
-                    @field(commands[0].measurements, field.name);
-                try printMeasurement(tty_conf, stdout_w, measurement, field.name, first_measurement, commands.len);
+                    @field(commands[0].measurements, field_name);
+                try printMeasurement(tty_conf, stdout_w, measurement, field_name, first_measurement, commands.len);
             }
 
             try stdout_w.flush();
@@ -373,15 +374,15 @@ pub fn main() !void {
         std.fs.path.stem(path),
     });
 
-    std.fs.cwd().makeDir(results_dir) catch |err| switch (err) {
+    std.Io.Dir.cwd().createDir(io, results_dir, .default_dir) catch |err| switch (err) {
         error.PathAlreadyExists => {},
         else => return err,
     };
 
-    const results_file = try std.fs.cwd().createFile(results_filepath, .{
+    const results_file = try std.Io.Dir.cwd().createFile(io, results_filepath, .{
         .truncate = true,
     });
-    defer results_file.close();
+    defer results_file.close(io);
     const Results = [commands.len]struct {
         name: []const u8,
         measurements: Command.Measurements,
@@ -396,7 +397,7 @@ pub fn main() !void {
         };
     }
     var json_write_buf: [4096]u8 = undefined;
-    var json_writer = results_file.writer(&json_write_buf);
+    var json_writer = results_file.writer(io, &json_write_buf);
     try std.json.fmt(results, .{ .whitespace = .indent_2 }).format(&json_writer.interface);
     try json_writer.interface.flush();
 }
@@ -417,7 +418,8 @@ const Format = extern struct {
 
 fn readPerfFd(fd: fd_t) Format {
     var result: Format = undefined;
-    const n = std.posix.read(fd, std.mem.asBytes(&result)) catch |err| {
+    const file: std.Io.File = .{ .handle = fd, .flags = .{ .nonblocking = false } };
+    const n = file.readStreaming(io, &.{std.mem.asBytes(&result)}) catch |err| {
         std.debug.panic("unable to read perf fd: {s}\n", .{@errorName(err)});
     };
     assert(n == @sizeOf(Format));
@@ -495,7 +497,7 @@ const Measurement = struct {
 };
 
 fn printMeasurement(
-    tty_conf: std.io.tty.Config,
+    tty_conf: std.Io.Terminal,
     w: anytype,
     m: Measurement,
     name: []const u8,
@@ -505,43 +507,43 @@ fn printMeasurement(
     try w.print("  {s}", .{name});
 
     var buf: [200]u8 = undefined;
-    var fbs = std.io.fixedBufferStream(&buf);
+    var fbs = std.Io.Writer.fixed(&buf);
     var count: usize = 0;
 
-    const color_enabled = tty_conf != .no_color;
+    const color_enabled = tty_conf.mode != .no_color;
     const spaces = 32 - ("  (mean  ):".len + name.len + 2);
     try writeByteNTimes(w, ' ', spaces);
     if (m.unit != .throughput) try writeByteNTimes(w, ' ', 2);
-    try tty_conf.setColor(w, .bright_green);
-    try printUnit(fbs.writer(), m.mean, m.unit, m.std_dev, color_enabled, true);
-    try w.writeAll(fbs.getWritten());
-    count += fbs.pos;
-    fbs.pos = 0;
-    try tty_conf.setColor(w, .reset);
+    try tty_conf.setColor(.bright_green);
+    try printUnit(&fbs, m.mean, m.unit, m.std_dev, color_enabled, true);
+    try w.writeAll(fbs.buffered());
+    count += fbs.end;
+    fbs.end = 0;
+    try tty_conf.setColor(.reset);
     try w.writeAll(" ± ");
-    try tty_conf.setColor(w, .green);
-    try printUnit(fbs.writer(), m.std_dev, m.unit, 0, color_enabled, true);
-    try w.writeAll(fbs.getWritten());
-    count += fbs.pos;
-    fbs.pos = 0;
-    try tty_conf.setColor(w, .reset);
+    try tty_conf.setColor(.green);
+    try printUnit(&fbs, m.std_dev, m.unit, 0, color_enabled, true);
+    try w.writeAll(fbs.buffered());
+    count += fbs.end;
+    fbs.end = 0;
+    try tty_conf.setColor(.reset);
 
     try writeByteNTimes(w, ' ', 66 - ("  measurement      ".len + count + 3));
     count = 0;
 
-    try tty_conf.setColor(w, .cyan);
-    try printUnit(fbs.writer(), @floatFromInt(m.min), m.unit, m.std_dev, color_enabled, true);
-    try w.writeAll(fbs.getWritten());
-    count += fbs.pos;
-    fbs.pos = 0;
-    try tty_conf.setColor(w, .reset);
+    try tty_conf.setColor(.cyan);
+    try printUnit(&fbs, @floatFromInt(m.min), m.unit, m.std_dev, color_enabled, true);
+    try w.writeAll(fbs.buffered());
+    count += fbs.end;
+    fbs.end = 0;
+    try tty_conf.setColor(.reset);
     try w.writeAll(" … ");
-    try tty_conf.setColor(w, .magenta);
-    try printUnit(fbs.writer(), @floatFromInt(m.max), m.unit, m.std_dev, color_enabled, true);
-    try w.writeAll(fbs.getWritten());
-    count += fbs.pos;
-    fbs.pos = 0;
-    try tty_conf.setColor(w, .reset);
+    try tty_conf.setColor(.magenta);
+    try printUnit(&fbs, @floatFromInt(m.max), m.unit, m.std_dev, color_enabled, true);
+    try w.writeAll(fbs.buffered());
+    count += fbs.end;
+    fbs.end = 0;
+    try tty_conf.setColor(.reset);
 
     try writeByteNTimes(w, ' ', 46 - (count + 1));
     if (m.unit == .throughput) try writeByteNTimes(w, ' ', 2);
@@ -549,14 +551,14 @@ fn printMeasurement(
 
     const outlier_percent = @as(f64, @floatFromInt(m.outlier_count)) / @as(f64, @floatFromInt(m.sample_count)) * 100;
     if (outlier_percent >= 10)
-        try tty_conf.setColor(w, .yellow)
+        try tty_conf.setColor(.yellow)
     else
-        try tty_conf.setColor(w, .dim);
-    try fbs.writer().print("{d: >4.0} ({d: >2.0}%)", .{ m.outlier_count, outlier_percent });
-    try w.writeAll(fbs.getWritten());
-    count += fbs.pos;
-    fbs.pos = 0;
-    try tty_conf.setColor(w, .reset);
+        try tty_conf.setColor(.dim);
+    try fbs.print("{d: >4.0} ({d: >2.0}%)", .{ m.outlier_count, outlier_percent });
+    try w.writeAll(fbs.buffered());
+    count += fbs.end;
+    fbs.end = 0;
+    try tty_conf.setColor(.reset);
 
     try writeByteNTimes(w, ' ', 19 - (count + 1));
 
@@ -589,19 +591,19 @@ fn printMeasurement(
                 if (m.mean <= f.mean) {
                     if (is_sig) {
                         try w.writeAll("💩");
-                        try tty_conf.setColor(w, .bright_red);
+                        try tty_conf.setColor(.bright_red);
                     } else {
-                        try tty_conf.setColor(w, .dim);
+                        try tty_conf.setColor(.dim);
                         try w.writeAll("  ");
                     }
                     try w.writeAll("-");
                 } else {
                     if (is_sig) {
-                        try tty_conf.setColor(w, .bright_yellow);
+                        try tty_conf.setColor(.bright_yellow);
                         try w.writeAll("⚡");
-                        try tty_conf.setColor(w, .bright_green);
+                        try tty_conf.setColor(.bright_green);
                     } else {
-                        try tty_conf.setColor(w, .dim);
+                        try tty_conf.setColor(.dim);
                         try w.writeAll("  ");
                     }
                     try w.writeAll("+");
@@ -609,34 +611,34 @@ fn printMeasurement(
             } else if (m.mean > f.mean) {
                 if (is_sig) {
                     try w.writeAll("💩");
-                    try tty_conf.setColor(w, .bright_red);
+                    try tty_conf.setColor(.bright_red);
                 } else {
-                    try tty_conf.setColor(w, .dim);
+                    try tty_conf.setColor(.dim);
                     try w.writeAll("  ");
                 }
                 try w.writeAll("+");
             } else {
                 if (is_sig) {
-                    try tty_conf.setColor(w, .bright_yellow);
+                    try tty_conf.setColor(.bright_yellow);
                     try w.writeAll("⚡");
-                    try tty_conf.setColor(w, .bright_green);
+                    try tty_conf.setColor(.bright_green);
                 } else {
-                    try tty_conf.setColor(w, .dim);
+                    try tty_conf.setColor(.dim);
                     try w.writeAll("  ");
                 }
                 try w.writeAll("-");
             }
-            try fbs.writer().print("{d: >5.1}% ± {d: >4.1}%", .{ @abs(diff_mean_percent), half });
-            try w.writeAll(fbs.getWritten());
-            count += fbs.pos;
-            fbs.pos = 0;
+            try fbs.print("{d: >5.1}% ± {d: >4.1}%", .{ @abs(diff_mean_percent), half });
+            try w.writeAll(fbs.buffered());
+            count += fbs.end;
+            fbs.end = 0;
         } else {
-            try tty_conf.setColor(w, .dim);
+            try tty_conf.setColor(.dim);
             try w.writeAll("0%");
         }
     }
 
-    try tty_conf.setColor(w, .reset);
+    try tty_conf.setColor(.reset);
     try w.writeAll("\n");
 }
 
@@ -812,7 +814,7 @@ const progress = struct {
     };
 
     pub fn getScreenWidth(stdout_handle: fd_t) usize {
-        var winsize: Winsize = undefined;
+        var winsize: Winsize = .{ .ws_row = 0, .ws_col = 0, .ws_xpixel = 0, .ws_ypixel = 0 };
         if (is_linux) {
             _ = std.os.linux.ioctl(stdout_handle, TIOCGWINSZ, @intFromPtr(&winsize));
         } else {
@@ -842,17 +844,17 @@ const progress = struct {
         spinner: Spinner,
         current: u64,
         estimate: u64,
-        stdout: std.fs.File,
+        stdout: std.Io.File,
         buf: std.ArrayList(u8),
         allocator: std.mem.Allocator,
-        last_rendered: std.time.Instant,
+        last_rendered: std.Io.Timestamp,
 
-        pub fn init(allocator: std.mem.Allocator, stdout: std.fs.File) !Self {
+        pub fn init(allocator: std.mem.Allocator, stdout: std.Io.File) !Self {
             const width = getScreenWidth(stdout.handle);
             const buf = try std.ArrayList(u8).initCapacity(allocator, width + WIDTH_PADDING);
             return Self{
                 .spinner = Spinner.init(),
-                .last_rendered = try std.time.Instant.now(),
+                .last_rendered = std.Io.Clock.awake.now(io),
                 .current = 0,
                 .estimate = 1,
                 .stdout = stdout,
@@ -862,13 +864,13 @@ const progress = struct {
         }
 
         pub fn deinit(self: *Self) void {
-            self.buf.deinit();
+            self.buf.deinit(self.allocator);
         }
 
         /// Clears then renders bar if enough time has passed since last render.
         pub fn render(self: *Self) !void {
-            const now = try std.time.Instant.now();
-            if (now.since(self.last_rendered) < 50 * std.time.ns_per_ms) {
+            const now = std.Io.Clock.awake.now(io);
+            if (self.last_rendered.durationTo(now).nanoseconds < 50 * std.time.ns_per_ms) {
                 return;
             }
             try self.clear();
@@ -877,41 +879,43 @@ const progress = struct {
             if (width + WIDTH_PADDING > self.buf.capacity) {
                 try self.buf.resize(self.allocator, width + WIDTH_PADDING);
             }
-            var writer = self.buf.writer(self.allocator);
+            var writer = std.Io.Writer.Allocating.fromArrayList(self.allocator, &self.buf);
+            defer self.buf = writer.toArrayList();
+            const w = &writer.writer;
             const bar_width = width - Spinner.frame1.len - " 10000 runs ".len - " 100% ".len;
             const prog_len = (bar_width * 2) * self.current / self.estimate;
             const full_bars_len: usize = @intCast(prog_len / 2);
 
-            try writer.print("{s}{s}{s} {d: >5} runs ", .{ EscapeCodes.cyan, self.spinner.get(), EscapeCodes.reset, self.current });
+            try w.print("{s}{s}{s} {d: >5} runs ", .{ EscapeCodes.cyan, self.spinner.get(), EscapeCodes.reset, self.current });
             self.spinner.next();
 
-            try writer.print("{s}", .{EscapeCodes.pink}); // pink
+            try w.print("{s}", .{EscapeCodes.pink}); // pink
             for (0..full_bars_len) |_| {
-                try writer.print(bar, .{});
+                try w.print(bar, .{});
             }
             if (prog_len % 2 == 1) {
-                try writer.print(half_bar_left, .{});
+                try w.print(half_bar_left, .{});
             }
-            try writer.print("{s}{s}", .{ EscapeCodes.white, EscapeCodes.dim }); // white
+            try w.print("{s}{s}", .{ EscapeCodes.white, EscapeCodes.dim }); // white
             if (prog_len % 2 == 0) {
-                try writer.print(half_bar_right, .{});
+                try w.print(half_bar_right, .{});
             }
             for (0..(bar_width - full_bars_len - 1)) |_| {
-                try writer.print(bar, .{});
+                try w.print(bar, .{});
             }
-            try writer.print("{s}", .{EscapeCodes.reset}); // reset
-            try writer.print(" {d: >3.0}% ", .{
+            try w.print("{s}", .{EscapeCodes.reset}); // reset
+            try w.print(" {d: >3.0}% ", .{
                 @as(f64, @floatFromInt(self.current)) * 100 / @as(f64, @floatFromInt(self.estimate)),
             });
             var write_buf: [4096]u8 = undefined;
-            var file_writer = self.stdout.writer(&write_buf);
-            try file_writer.interface.writeAll(self.buf.items[0..self.buf.items.len]);
+            var file_writer = self.stdout.writer(io, &write_buf);
+            try file_writer.interface.writeAll(writer.written());
             try file_writer.interface.flush();
         }
 
         pub fn clear(self: *Self) !void {
             var write_buf: [256]u8 = undefined;
-            var file_writer = self.stdout.writer(&write_buf);
+            var file_writer = self.stdout.writer(io, &write_buf);
             try file_writer.interface.writeAll(EscapeCodes.erase_line); // clear and reset line
             try file_writer.interface.flush();
             self.buf.clearRetainingCapacity();

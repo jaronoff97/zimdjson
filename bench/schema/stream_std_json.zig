@@ -1,4 +1,5 @@
 const std = @import("std");
+const io = std.Io.Threaded.global_single_threaded.io();
 const TracedAllocator = @import("TracedAllocator");
 
 var traced = TracedAllocator{ .wrapped = std.heap.c_allocator };
@@ -14,9 +15,11 @@ pub fn init(path: []const u8) !void {
 pub fn prerun() !void {}
 
 pub fn run() !void {
-    const file = try std.fs.openFileAbsolute(json, .{});
-    defer file.close();
-    var reader = std.json.reader(allocator, file.reader());
+    const file = try std.Io.Dir.cwd().openFile(io, json, .{});
+    defer file.close(io);
+    var read_buf: [4096]u8 = undefined;
+    var file_reader = file.reader(io, &read_buf);
+    var reader = std.json.Reader.init(allocator, &file_reader.interface);
     defer reader.deinit();
     doc = try std.json.parseFromTokenSource(Schema, allocator, &reader, .{
         .ignore_unknown_fields = true,

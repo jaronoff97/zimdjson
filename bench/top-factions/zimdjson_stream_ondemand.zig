@@ -1,4 +1,5 @@
 const std = @import("std");
+const io = std.Io.Threaded.global_single_threaded.io();
 const zimdjson = @import("zimdjson");
 const TracedAllocator = @import("TracedAllocator");
 
@@ -17,7 +18,7 @@ const expected = TopFactions{
 var traced = TracedAllocator{ .wrapped = std.heap.c_allocator };
 const allocator = traced.allocator();
 
-var file: std.fs.File = undefined;
+var file: std.Io.File = undefined;
 var read_buf: [4096]u8 = undefined;
 var path: []const u8 = undefined;
 var parser = zimdjson.ondemand.StreamParser(.default).init;
@@ -32,9 +33,9 @@ pub fn prerun() !void {}
 pub fn run() !void {
     result.factions_count = 0;
 
-    file = try std.fs.openFileAbsolute(path, .{});
-    try parser.expectDocumentSize(allocator, (try file.stat()).size);
-    var file_reader = file.reader(&read_buf);
+    file = try std.Io.Dir.cwd().openFile(io, path, .{});
+    try parser.expectDocumentSize(allocator, (try file.stat(io)).size);
+    var file_reader = file.reader(io, &read_buf);
     const doc = try parser.parseFromReader(allocator, &file_reader.interface);
     var systems = (try doc.asArray()).iterator();
     while (try systems.next()) |system| {
@@ -62,7 +63,7 @@ pub fn postrun() !void {
     {
         @panic("top factions unequal to expected");
     }
-    file.close();
+    file.close(io);
 }
 
 pub fn deinit() void {

@@ -33,7 +33,7 @@ flags = sys.argv[1:]
 if '--run' in flags:
     for file in files:
         for i in range(0, 2): # warmup
-            subprocess.run("zig build bench/index --release=fast -- " + file + '.json', shell=True)
+            subprocess.run("zig build bench/index --release=fast -Dfile=" + file + '.json', shell=True)
 
 def suite_dataframe(name):
     json = pd.read_json('bench/index/results/' + name + '.json')

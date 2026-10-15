@@ -12,9 +12,23 @@ const min_chunk_length = if (native_os == .windows) 1024 * 64 else std.heap.page
 
 pub const Error =
     std.posix.MemFdCreateError ||
-    std.posix.TruncateError ||
+    error{ FileTooBig, InputOutput, AccessDenied, FileBusy } ||
     std.posix.MMapError ||
-    (if (native_os == .macos) std.posix.GetRandomError else error{});
+    error{ PathAlreadyExists, NameTooLong };
+
+fn truncate(handle: posix.fd_t, length: usize) Error!void {
+    while (true) {
+        switch (posix.errno(std.c.ftruncate(handle, @intCast(length)))) {
+            .SUCCESS => return,
+            .INTR => continue,
+            .FBIG => return error.FileTooBig,
+            .IO => return error.InputOutput,
+            .ACCES, .PERM => return error.AccessDenied,
+            .TXTBSY => return error.FileBusy,
+            else => |err| return posix.unexpectedErrno(err),
+        }
+    }
+}
 
 pub fn RingBuffer(comptime T: type, comptime length: usize) type {
     const byte_len = @sizeOf(T) * length;
@@ -29,7 +43,7 @@ pub fn RingBuffer(comptime T: type, comptime length: usize) type {
 
         const Buffer = struct {
             buffer: [*]align(std.heap.page_size_min) u8,
-            handle: if (native_os == .windows) w.HANDLE else std.fs.File.Handle,
+            handle: if (native_os == .windows) w.HANDLE else posix.fd_t,
 
             pub fn init() Error!Buffer {
                 switch (native_os) {
@@ -41,36 +55,35 @@ pub fn RingBuffer(comptime T: type, comptime length: usize) type {
                         const MEM_RESERVE = 0x02000;
                         const MEM_RESERVE_PLACEHOLDER = 0x40000;
                         const MEM_REPLACE_PLACEHOLDER = 0x04000;
-                        const MEM_PRESERVE_PLACEHOLDER = 0x00002;
 
                         const buffer: [*]align(std.heap.page_size_min) u8 = @ptrCast(@alignCast(VirtualAlloc2(
                             null,
                             null,
                             byte_len * 2,
                             MEM_RESERVE | MEM_RESERVE_PLACEHOLDER,
-                            w.PAGE_NOACCESS,
+                            .{ .NOACCESS = true },
                             null,
                             0,
-                        ) orelse switch (w.kernel32.GetLastError()) {
+                        ) orelse switch (w.GetLastError()) {
                             else => |err| return w.unexpectedError(err),
                         }));
 
                         var free_buffer = true;
-                        defer if (free_buffer) w.VirtualFree(buffer, 0, w.MEM_RELEASE);
+                        defer if (free_buffer) assert(VirtualFree(buffer, 0, .{ .RELEASE = true }).toBool());
 
-                        w.VirtualFree(buffer, byte_len, w.MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER);
+                        assert(VirtualFree(buffer, byte_len, .{ .RELEASE = true, .PRESERVE_PLACEHOLDER = true }).toBool());
 
                         var free_mirror = true;
-                        defer if (free_mirror) w.VirtualFree(buffer + byte_len, 0, w.MEM_RELEASE);
+                        defer if (free_mirror) assert(VirtualFree(buffer + byte_len, 0, .{ .RELEASE = true }).toBool());
 
                         const handle = CreateFileMappingW(
                             w.INVALID_HANDLE_VALUE,
                             null,
-                            w.PAGE_READWRITE,
+                            .{ .READWRITE = true },
                             0,
                             byte_len,
                             null,
-                        ) orelse switch (w.kernel32.GetLastError()) {
+                        ) orelse switch (w.GetLastError()) {
                             else => |err| return w.unexpectedError(err),
                         };
                         errdefer w.CloseHandle(handle);
@@ -82,13 +95,13 @@ pub fn RingBuffer(comptime T: type, comptime length: usize) type {
                             0,
                             byte_len,
                             MEM_REPLACE_PLACEHOLDER,
-                            w.PAGE_READWRITE,
+                            .{ .READWRITE = true },
                             null,
                             0,
-                        ) orelse switch (w.kernel32.GetLastError()) {
+                        ) orelse switch (w.GetLastError()) {
                             else => |err| return w.unexpectedError(err),
                         };
-                        errdefer assert(0 != UnmapViewOfFileEx(mirror1, 0));
+                        errdefer assert(UnmapViewOfFileEx(mirror1, 0).toBool());
                         free_buffer = false;
 
                         const mirror2 = MapViewOfFile3(
@@ -98,13 +111,13 @@ pub fn RingBuffer(comptime T: type, comptime length: usize) type {
                             0,
                             byte_len,
                             MEM_REPLACE_PLACEHOLDER,
-                            w.PAGE_READWRITE,
+                            .{ .READWRITE = true },
                             null,
                             0,
-                        ) orelse switch (w.kernel32.GetLastError()) {
+                        ) orelse switch (w.GetLastError()) {
                             else => |err| return w.unexpectedError(err),
                         };
-                        errdefer assert(0 != UnmapViewOfFileEx(mirror2, 0));
+                        errdefer assert(UnmapViewOfFileEx(mirror2, 0).toBool());
                         free_mirror = false;
 
                         return .{ .buffer = buffer, .handle = handle };
@@ -119,7 +132,7 @@ pub fn RingBuffer(comptime T: type, comptime length: usize) type {
                         var encoded_buffer: [pshmnamlen + 1]u8 = undefined;
                         @memcpy(encoded_buffer[0..shm_prefix.len], shm_prefix);
                         var rand_bytes: [18]u8 = undefined; // 18 is the required bytes for 24 base64 encoded bytes
-                        try std.posix.getrandom(&rand_bytes);
+                        std.c.arc4random_buf(&rand_bytes, rand_bytes.len);
                         const encoded = encoder.encode(encoded_buffer[shm_prefix.len..], &rand_bytes);
                         assert(encoded.len == base64_len);
                         encoded_buffer[pshmnamlen] = 0;
@@ -132,21 +145,21 @@ pub fn RingBuffer(comptime T: type, comptime length: usize) type {
                                 .CREAT = true,
                                 .EXCL = true,
                             }),
-                            std.posix.S.IRUSR | std.posix.S.IWUSR,
+                            @as(c_uint, std.posix.S.IRUSR | std.posix.S.IWUSR),
                         );
-                        if (handle == -1) switch (@as(std.posix.E, @enumFromInt(std.c._errno().*))) {
+                        if (handle == -1) switch (@as(std.posix.E, @fromBackingInt(@intCast(std.c._errno().*)))) {
                             .EXIST => return error.PathAlreadyExists,
                             .NAMETOOLONG => return error.NameTooLong,
                             else => |err| return std.posix.unexpectedErrno(err),
                         };
-                        errdefer posix.close(handle);
+                        errdefer _ = std.c.close(handle);
 
-                        try posix.ftruncate(handle, byte_len);
+                        try truncate(handle, byte_len);
 
                         const buffer = try posix.mmap(
                             null,
                             byte_len * 2,
-                            posix.PROT.READ | posix.PROT.WRITE,
+                            .{ .READ = true, .WRITE = true },
                             .{
                                 .TYPE = .PRIVATE,
                                 .ANONYMOUS = true,
@@ -159,7 +172,7 @@ pub fn RingBuffer(comptime T: type, comptime length: usize) type {
                         _ = try posix.mmap(
                             @alignCast(buffer.ptr),
                             byte_len,
-                            posix.PROT.READ | posix.PROT.WRITE,
+                            .{ .READ = true, .WRITE = true },
                             .{
                                 .TYPE = .SHARED,
                                 .FIXED = true,
@@ -171,7 +184,7 @@ pub fn RingBuffer(comptime T: type, comptime length: usize) type {
                         _ = try posix.mmap(
                             @alignCast(buffer.ptr + byte_len),
                             byte_len,
-                            posix.PROT.READ | posix.PROT.WRITE,
+                            .{ .READ = true, .WRITE = true },
                             .{
                                 .TYPE = .SHARED,
                                 .FIXED = true,
@@ -187,19 +200,19 @@ pub fn RingBuffer(comptime T: type, comptime length: usize) type {
 
                         // Close the fd now - it's no longer needed after mmap completes.
                         // This prevents fd exhaustion in high-concurrency scenarios.
-                        posix.close(handle);
+                        _ = std.c.close(handle);
 
                         return .{ .buffer = buffer.ptr, .handle = -1 };
                     },
                     else => {
-                        const handle = try posix.memfd_create("zimdjson_ringbuffer", posix.FD_CLOEXEC);
-                        errdefer posix.close(handle);
-                        try posix.ftruncate(handle, byte_len);
+                        const handle = try posix.memfd_create("zimdjson_ringbuffer", posix.MFD.CLOEXEC);
+                        errdefer _ = std.c.close(handle);
+                        try truncate(handle, byte_len);
 
                         const buffer = try posix.mmap(
                             null,
                             byte_len * 2,
-                            posix.PROT.READ | posix.PROT.WRITE,
+                            .{ .READ = true, .WRITE = true },
                             .{
                                 .TYPE = .PRIVATE,
                                 .ANONYMOUS = true,
@@ -212,7 +225,7 @@ pub fn RingBuffer(comptime T: type, comptime length: usize) type {
                         _ = try posix.mmap(
                             @alignCast(buffer.ptr),
                             byte_len,
-                            posix.PROT.READ | posix.PROT.WRITE,
+                            .{ .READ = true, .WRITE = true },
                             .{
                                 .TYPE = .SHARED,
                                 .FIXED = true,
@@ -224,7 +237,7 @@ pub fn RingBuffer(comptime T: type, comptime length: usize) type {
                         _ = try posix.mmap(
                             @alignCast(buffer.ptr + byte_len),
                             byte_len,
-                            posix.PROT.READ | posix.PROT.WRITE,
+                            .{ .READ = true, .WRITE = true },
                             .{
                                 .TYPE = .SHARED,
                                 .FIXED = true,
@@ -240,8 +253,8 @@ pub fn RingBuffer(comptime T: type, comptime length: usize) type {
             pub fn deinit(self: Buffer) void {
                 switch (native_os) {
                     .windows => {
-                        assert(0 != UnmapViewOfFile(self.buffer));
-                        assert(0 != UnmapViewOfFile(self.buffer + byte_len));
+                        assert(UnmapViewOfFile(self.buffer).toBool());
+                        assert(UnmapViewOfFile(self.buffer + byte_len).toBool());
                         w.CloseHandle(self.handle);
                     },
                     .macos => {
@@ -250,7 +263,7 @@ pub fn RingBuffer(comptime T: type, comptime length: usize) type {
                     },
                     else => {
                         posix.munmap(self.buffer[0 .. byte_len * 2]);
-                        posix.close(self.handle);
+                        _ = std.c.close(self.handle);
                     },
                 }
             }
@@ -276,8 +289,9 @@ pub fn RingBuffer(comptime T: type, comptime length: usize) type {
     };
 }
 
-extern "api-ms-win-core-memory-l1-1-6" fn VirtualAlloc2(Process: ?w.HANDLE, BaseAddress: ?w.PVOID, Size: w.SIZE_T, AllocationType: w.ULONG, PageProtection: w.ULONG, ExtendedParameters: ?*anyopaque, ParameterCount: w.ULONG) callconv(w.WINAPI) ?w.PVOID;
-extern "api-ms-win-core-memory-l1-1-6" fn CreateFileMappingW(hFile: w.HANDLE, lpFileMappingAttributes: ?*anyopaque, flProtect: w.DWORD, dwMaximumSizeHigh: w.DWORD, dwMaximumSizeLow: w.DWORD, lpName: ?w.LPCWSTR) callconv(w.WINAPI) ?w.HANDLE;
-extern "api-ms-win-core-memory-l1-1-6" fn MapViewOfFile3(FileMapping: w.HANDLE, Process: ?w.HANDLE, BaseAddress: w.PVOID, Offset: w.ULONG64, ViewSize: w.SIZE_T, AllocationType: w.ULONG, PageProtection: w.ULONG, ExtendedParameters: ?*anyopaque, ParameterCount: w.ULONG) callconv(w.WINAPI) ?w.PVOID;
-extern "api-ms-win-core-memory-l1-1-6" fn UnmapViewOfFileEx(BaseAddress: w.PVOID, UnmapFlags: w.ULONG) callconv(w.WINAPI) w.BOOL;
-extern "api-ms-win-core-memory-l1-1-6" fn UnmapViewOfFile(lpBaseAddress: w.LPCVOID) callconv(w.WINAPI) w.BOOL;
+extern "api-ms-win-core-memory-l1-1-6" fn VirtualAlloc2(Process: ?w.HANDLE, BaseAddress: ?w.PVOID, Size: w.SIZE_T, AllocationType: w.ULONG, PageProtection: w.PAGE, ExtendedParameters: ?*anyopaque, ParameterCount: w.ULONG) callconv(.winapi) ?w.PVOID;
+extern "api-ms-win-core-memory-l1-1-6" fn CreateFileMappingW(hFile: w.HANDLE, lpFileMappingAttributes: ?*anyopaque, flProtect: w.PAGE, dwMaximumSizeHigh: w.DWORD, dwMaximumSizeLow: w.DWORD, lpName: ?w.LPCWSTR) callconv(.winapi) ?w.HANDLE;
+extern "api-ms-win-core-memory-l1-1-6" fn MapViewOfFile3(FileMapping: w.HANDLE, Process: ?w.HANDLE, BaseAddress: w.PVOID, Offset: w.ULONG64, ViewSize: w.SIZE_T, AllocationType: w.ULONG, PageProtection: w.PAGE, ExtendedParameters: ?*anyopaque, ParameterCount: w.ULONG) callconv(.winapi) ?w.PVOID;
+extern "api-ms-win-core-memory-l1-1-6" fn UnmapViewOfFileEx(BaseAddress: w.PVOID, UnmapFlags: w.ULONG) callconv(.winapi) w.BOOL;
+extern "api-ms-win-core-memory-l1-1-6" fn UnmapViewOfFile(lpBaseAddress: w.LPCVOID) callconv(.winapi) w.BOOL;
+extern "kernel32" fn VirtualFree(lpAddress: w.PVOID, dwSize: w.SIZE_T, dwFreeType: w.MEM.FREE) callconv(.winapi) w.BOOL;

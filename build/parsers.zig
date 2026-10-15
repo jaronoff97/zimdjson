@@ -8,7 +8,7 @@ pub const Parsers = struct {
     pub fn get(
         b: *std.Build,
         target: std.Build.ResolvedTarget,
-        optimize: std.builtin.OptimizeMode,
+        optimize: std.builtin.Optimize,
     ) ?Parsers {
         const simdjson_dep = b.lazyDependency("simdjson", .{}) orelse return null;
         const simdjson = b.addLibrary(.{
@@ -18,6 +18,7 @@ pub const Parsers = struct {
                 .root_source_file = null,
                 .target = target,
                 .optimize = optimize,
+                .pic = true,
             }),
         });
         simdjson.root_module.link_libcpp = true;
@@ -37,6 +38,7 @@ pub const Parsers = struct {
                 .root_source_file = null,
                 .target = target,
                 .optimize = optimize,
+                .pic = true,
             }),
         });
         yyjson.root_module.link_libc = true;
@@ -51,6 +53,7 @@ pub const Parsers = struct {
                 .root_source_file = null,
                 .target = target,
                 .optimize = optimize,
+                .pic = true,
             }),
         });
         rapidjson.root_module.link_libcpp = true;

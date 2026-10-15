@@ -57,6 +57,40 @@ const assert = std.debug.assert;
 const ArenaAllocator = std.heap.ArenaAllocator;
 const ArrayList = std.ArrayListUnmanaged;
 
+// Keep schema traversal uniform across Zig's separate reflection arrays.
+const ReflectionField = struct {
+    name: [:0]const u8,
+    type: type = void,
+    is_comptime: bool = false,
+    default_value_ptr: ?*const anyopaque = null,
+};
+
+fn fieldsOf(comptime T: type) []const ReflectionField {
+    const info = @typeInfo(T);
+    const names = switch (info) {
+        .@"struct" => |s| s.field_names,
+        .@"union" => |u| u.field_names,
+        .@"enum" => |e| e.field_names,
+        else => @compileError("Expected a struct, union or enum"),
+    };
+    comptime var fields: [names.len]ReflectionField = undefined;
+    inline for (names, 0..) |name, i| {
+        fields[i] = .{ .name = name };
+        switch (info) {
+            .@"struct" => |s| {
+                fields[i].type = s.field_types[i];
+                fields[i].is_comptime = s.field_attrs[i].@"comptime";
+                fields[i].default_value_ptr = s.field_attrs[i].default_value_ptr;
+            },
+            .@"union" => |u| fields[i].type = u.field_types[i],
+            .@"enum" => {},
+            else => unreachable,
+        }
+    }
+    const result = fields;
+    return &result;
+}
+
 /// The available options for parsing in full mode.
 pub const FullOptions = struct {
     pub const default: @This() = .{};
@@ -220,7 +254,7 @@ pub fn Parser(comptime format: types.Format, comptime options: Options) type {
                 /// An allocator was not provided.
                 ExpectedAllocator,
             } ||
-            (if (builtin.mode == .Debug) error{
+            (if (builtin.mode == .debug) error{
                 /// Found an illegal iteration order.
                 OutOfOrderIteration,
             } else error{});
@@ -232,7 +266,7 @@ pub fn Parser(comptime format: types.Format, comptime options: Options) type {
 
         // only used in full mode
         document_buffer: std.ArrayListAlignedUnmanaged(u8, types.Aligned(true).mem_alignment),
-        reader_error: ?std.meta.Int(.unsigned, @bitSizeOf(anyerror)),
+        reader_error: ?@Int(.unsigned, @bitSizeOf(anyerror)),
 
         string_buffer: types.StringBuffer(max_capacity_bound),
 
@@ -314,7 +348,7 @@ pub fn Parser(comptime format: types.Format, comptime options: Options) type {
             if (want_stream) @compileError("Parsing from a slice is not supported in streaming mode");
             self.reader_error = null;
 
-            if (builtin.mode == .Debug) {
+            if (builtin.mode == .debug) {
                 try self.cursor.start_positions.ensureTotalCapacity(allocator, self.max_depth);
                 self.cursor.start_positions.expandToCapacity();
             }
@@ -342,7 +376,7 @@ pub fn Parser(comptime format: types.Format, comptime options: Options) type {
 
         /// Parse a JSON document from reader. Allocated resources are owned by the parser.
         pub fn parseFromReader(self: *Self, allocator: Allocator, reader: *std.Io.Reader) (Error || ReaderError)!Document {
-            if (builtin.mode == .Debug) {
+            if (builtin.mode == .debug) {
                 try self.cursor.start_positions.ensureTotalCapacity(allocator, self.max_depth);
                 self.cursor.start_positions.expandToCapacity();
             }
@@ -402,21 +436,21 @@ pub fn Parser(comptime format: types.Format, comptime options: Options) type {
         const Cursor = struct {
             document: *Self = undefined,
             tokens: Tokens,
-            start_positions: if (builtin.mode == .Debug) ArrayList(usize) else void,
+            start_positions: if (builtin.mode == .debug) ArrayList(usize) else void,
             depth: u32,
             root: usize = undefined,
             err: ?Error,
 
             pub const init: Cursor = .{
                 .tokens = .init,
-                .start_positions = if (builtin.mode == .Debug) .empty else {},
+                .start_positions = if (builtin.mode == .debug) .empty else {},
                 .depth = 1,
                 .err = null,
             };
 
             pub fn deinit(self: *Cursor, allocator: Allocator) void {
                 self.tokens.deinit(allocator);
-                if (builtin.mode == .Debug) {
+                if (builtin.mode == .debug) {
                     self.start_positions.deinit(allocator);
                 }
             }
@@ -544,14 +578,14 @@ pub fn Parser(comptime format: types.Format, comptime options: Options) type {
             /// Cast the document to a JSON value.
             /// Note that this method removes some validation, so it should be done manually.
             pub fn asValue(self: Document) Value {
-                if (builtin.mode == .Debug) if (!self.iter.isAtRoot()) return .{ .iter = self.iter, .err = error.OutOfOrderIteration };
+                if (builtin.mode == .debug) if (!self.iter.isAtRoot()) return .{ .iter = self.iter, .err = error.OutOfOrderIteration };
                 self.iter.assertAtRoot();
                 return .{ .iter = self.iter };
             }
 
             /// Cast the document to an object.
             pub fn asObject(self: Document) Error!Object {
-                if (builtin.mode == .Debug) if (!self.iter.isAtRoot()) return error.OutOfOrderIteration;
+                if (builtin.mode == .debug) if (!self.iter.isAtRoot()) return error.OutOfOrderIteration;
                 self.iter.assertAtRoot();
                 const started, const object = try Object.start(self.iter);
                 if (started or try self.iter.isAtEnd()) return object;
@@ -560,7 +594,7 @@ pub fn Parser(comptime format: types.Format, comptime options: Options) type {
 
             /// Cast the document to an array.
             pub fn asArray(self: Document) Error!Array {
-                if (builtin.mode == .Debug) if (!self.iter.isAtRoot()) return error.OutOfOrderIteration;
+                if (builtin.mode == .debug) if (!self.iter.isAtRoot()) return error.OutOfOrderIteration;
                 self.iter.assertAtRoot();
                 const started, const array = try Array.start(self.iter);
                 if (started or try self.iter.isAtEnd()) return array;
@@ -569,7 +603,7 @@ pub fn Parser(comptime format: types.Format, comptime options: Options) type {
 
             /// Cast the document to a number.
             pub fn asNumber(self: Document) Error!Number {
-                if (builtin.mode == .Debug) if (!self.iter.isAtRoot()) return error.OutOfOrderIteration;
+                if (builtin.mode == .debug) if (!self.iter.isAtRoot()) return error.OutOfOrderIteration;
                 self.iter.assertAtRoot();
                 const n = try self.iter.asNumber();
                 if (try self.iter.isAtEnd()) return n;
@@ -578,7 +612,7 @@ pub fn Parser(comptime format: types.Format, comptime options: Options) type {
 
             /// Cast the document to an unsigned integer.
             pub fn asUnsigned(self: Document) Error!u64 {
-                if (builtin.mode == .Debug) if (!self.iter.isAtRoot()) return error.OutOfOrderIteration;
+                if (builtin.mode == .debug) if (!self.iter.isAtRoot()) return error.OutOfOrderIteration;
                 self.iter.assertAtRoot();
                 const n = try self.iter.asUnsigned();
                 if (try self.iter.isAtEnd()) return n;
@@ -587,7 +621,7 @@ pub fn Parser(comptime format: types.Format, comptime options: Options) type {
 
             /// Cast the document to a signed integer.
             pub fn asSigned(self: Document) Error!i64 {
-                if (builtin.mode == .Debug) if (!self.iter.isAtRoot()) return error.OutOfOrderIteration;
+                if (builtin.mode == .debug) if (!self.iter.isAtRoot()) return error.OutOfOrderIteration;
                 self.iter.assertAtRoot();
                 const n = try self.iter.asSigned();
                 if (try self.iter.isAtEnd()) return n;
@@ -596,7 +630,7 @@ pub fn Parser(comptime format: types.Format, comptime options: Options) type {
 
             /// Cast the document to a double floating point.
             pub fn asDouble(self: Document) Error!f64 {
-                if (builtin.mode == .Debug) if (!self.iter.isAtRoot()) return error.OutOfOrderIteration;
+                if (builtin.mode == .debug) if (!self.iter.isAtRoot()) return error.OutOfOrderIteration;
                 self.iter.assertAtRoot();
                 const n = try self.iter.asDouble();
                 if (try self.iter.isAtEnd()) return n;
@@ -612,7 +646,7 @@ pub fn Parser(comptime format: types.Format, comptime options: Options) type {
             /// **Another note**: A value should be consumed once. Calling `asString` twice on the same value
             /// is an error.
             pub fn asString(self: Document) Error![]const u8 {
-                if (builtin.mode == .Debug) if (!self.iter.isAtRoot()) return error.OutOfOrderIteration;
+                if (builtin.mode == .debug) if (!self.iter.isAtRoot()) return error.OutOfOrderIteration;
                 self.iter.assertAtRoot();
                 const str: []const u8 = try self.iter.asString();
                 if (try self.iter.isAtEnd()) return str;
@@ -626,7 +660,7 @@ pub fn Parser(comptime format: types.Format, comptime options: Options) type {
             /// **Note**: In streaming mode, this value becomes invalid once it is out of the current
             /// chunk's scope, so it should be used immediately.
             pub fn asRawString(self: Document) RawString {
-                if (builtin.mode == .Debug) if (!self.iter.isAtRoot()) return .{ .iter = self.iter, .raw_str = undefined, .err = error.OutOfOrderIteration };
+                if (builtin.mode == .debug) if (!self.iter.isAtRoot()) return .{ .iter = self.iter, .raw_str = undefined, .err = error.OutOfOrderIteration };
                 self.iter.assertAtRoot();
                 const str: RawString = self.iter.asRawString() catch |err| .{
                     .iter = self.iter,
@@ -648,7 +682,7 @@ pub fn Parser(comptime format: types.Format, comptime options: Options) type {
 
             /// Cast the document to a bool.
             pub fn asBool(self: Document) Error!bool {
-                if (builtin.mode == .Debug) if (!self.iter.isAtRoot()) return error.OutOfOrderIteration;
+                if (builtin.mode == .debug) if (!self.iter.isAtRoot()) return error.OutOfOrderIteration;
                 self.iter.assertAtRoot();
                 const b = try self.iter.asBool();
                 if (try self.iter.isAtEnd()) return b;
@@ -660,7 +694,7 @@ pub fn Parser(comptime format: types.Format, comptime options: Options) type {
             /// If we find a token that begins with `'n'` but is not `'null'`, then an
             /// `error.IncorrectType` is returned.
             pub fn isNull(self: Document) Error!bool {
-                if (builtin.mode == .Debug) if (!self.iter.isAtRoot()) return error.OutOfOrderIteration;
+                if (builtin.mode == .debug) if (!self.iter.isAtRoot()) return error.OutOfOrderIteration;
                 self.iter.assertAtRoot();
                 const n = try self.iter.isNull();
                 if (try self.iter.isAtEnd()) return n;
@@ -669,7 +703,7 @@ pub fn Parser(comptime format: types.Format, comptime options: Options) type {
 
             /// Cast the document to any JSON value.
             pub fn asAny(self: Document) Error!AnyValue {
-                if (builtin.mode == .Debug) if (!self.iter.isAtRoot()) return error.OutOfOrderIteration;
+                if (builtin.mode == .debug) if (!self.iter.isAtRoot()) return error.OutOfOrderIteration;
                 self.iter.assertAtRoot();
                 return switch (self.iter.cursor.peekChar()) {
                     't', 'f' => .{ .bool = try self.asBool() },
@@ -1081,7 +1115,7 @@ pub fn Parser(comptime format: types.Format, comptime options: Options) type {
 
                 inline fn startedObject(self: Iterator) Error!bool {
                     self.assertAtContainerStart();
-                    if (builtin.mode == .Debug) {
+                    if (builtin.mode == .debug) {
                         self.cursor.setStartPosition(self.start_depth, self.start_position);
                     }
                     const char = self.cursor.peekChar();
@@ -1109,7 +1143,7 @@ pub fn Parser(comptime format: types.Format, comptime options: Options) type {
                         return false;
                     }
                     self.cursor.descend(self.cursor.depth + 1);
-                    if (builtin.mode == .Debug) {
+                    if (builtin.mode == .debug) {
                         self.cursor.setStartPosition(self.start_depth, self.start_position);
                     }
                     return true;
@@ -1130,7 +1164,7 @@ pub fn Parser(comptime format: types.Format, comptime options: Options) type {
                         try Logger.log(self.cursor.document, ptr, if (start_char == '{') "object" else "array ", self.start_depth);
                         return iter;
                     } else {
-                        if (builtin.mode == .Debug) if (!self.isAtContainerStart()) return error.OutOfOrderIteration;
+                        if (builtin.mode == .debug) if (!self.isAtContainerStart()) return error.OutOfOrderIteration;
 
                         if (self.start_char != start_char) return error.IncorrectType;
                         return self;
@@ -1182,9 +1216,9 @@ pub fn Parser(comptime format: types.Format, comptime options: Options) type {
                         try self.skipChild();
                         if (unordered) search_start = self.cursor.position();
                         has_value = try self.hasNextField();
-                        if (builtin.mode == .Debug) if (self.cursor.getStartPosition(self.start_depth) != self.start_position) return error.OutOfOrderIteration;
+                        if (builtin.mode == .debug) if (self.cursor.getStartPosition(self.start_depth) != self.start_position) return error.OutOfOrderIteration;
                     } else {
-                        if (builtin.mode == .Debug) if (self.cursor.depth < self.start_depth - 1) return error.OutOfOrderIteration;
+                        if (builtin.mode == .debug) if (self.cursor.depth < self.start_depth - 1) return error.OutOfOrderIteration;
                         if (!unordered) return false;
                         has_value = try self.resetObject();
                         at_first = true;
@@ -1534,7 +1568,7 @@ pub fn Parser(comptime format: types.Format, comptime options: Options) type {
                 allocator: ?Allocator,
                 dest: *anyopaque,
             ) schema.Error!void {
-                return self.asAdvancedInner(T, S, P, allocator, @alignCast(@ptrCast(dest)));
+                return self.asAdvancedInner(T, S, P, allocator, @ptrCast(@alignCast(dest)));
             }
 
             fn skip(self: Value) Error!void {
@@ -1734,7 +1768,7 @@ pub fn Parser(comptime format: types.Format, comptime options: Options) type {
 
             /// Iterate over the values in the array.
             pub fn iterator(self: Array) Iterator {
-                if (builtin.mode == .Debug)
+                if (builtin.mode == .debug)
                     if (!self.iter.isAtContainerStart()) {
                         self.iter.cursor.reportError(error.OutOfOrderIteration) catch {};
                     };
@@ -1882,7 +1916,7 @@ pub fn Parser(comptime format: types.Format, comptime options: Options) type {
 
             /// Iterate over the fields in the object.
             pub fn iterator(self: Object) Iterator {
-                if (builtin.mode == .Debug)
+                if (builtin.mode == .debug)
                     if (!self.iter.isAtContainerStart()) {
                         self.iter.cursor.reportError(error.OutOfOrderIteration) catch {};
                     };
@@ -2430,10 +2464,10 @@ pub fn Parser(comptime format: types.Format, comptime options: Options) type {
 
             fn StructFields(comptime T: type) type {
                 assert(@typeInfo(T) == .@"struct");
-                const fields = _std.meta.fields(T);
+                const fields = comptime fieldsOf(T);
                 comptime var field_names: [fields.len][]const u8 = undefined;
                 comptime var field_types: [fields.len]type = undefined;
-                comptime var field_attrs: [fields.len]_std.builtin.Type.StructField.Attributes = undefined;
+                comptime var field_attrs: [fields.len]_std.lang.Type.Struct.FieldAttributes = undefined;
                 inline for (0..fields.len) |i| {
                     const field = fields[i];
                     if (field.is_comptime) @compileError("comptime fields are not supported: " ++ @typeName(T) ++ "." ++ field.name);
@@ -2467,7 +2501,7 @@ pub fn Parser(comptime format: types.Format, comptime options: Options) type {
             }
 
             fn parseStruct(comptime T: type, comptime S: schema.Struct(T), allocator: ?Allocator, value: Value) schema.Error!T {
-                const fields = _std.meta.fields(T);
+                const fields = comptime fieldsOf(T);
                 if (@typeInfo(T).@"struct".is_tuple and fields.len > 0) {
                     var dest = undefinedInit(T);
                     const fields_schema_parser = makeFieldsSPTuple(T, S, fields){};
@@ -2505,7 +2539,7 @@ pub fn Parser(comptime format: types.Format, comptime options: Options) type {
                 allocator: ?Allocator,
                 it: *Object.Iterator,
             ) schema.Error!T {
-                const fields = _std.meta.fields(T);
+                const fields = comptime fieldsOf(T);
                 const is_packed = @typeInfo(T).@"struct".layout == .@"packed";
                 var dest = undefinedInit(T);
                 const fields_schema_parser = makeFieldsSPTuple(T, S, fields){};
@@ -2645,7 +2679,7 @@ pub fn Parser(comptime format: types.Format, comptime options: Options) type {
                         const s, const p = @field(fields_schema_parser, field.name);
                         dispatches_mut[i] = .{ renamed_key, .{
                             .offset = if (is_packed) @bitOffsetOf(T, field.name) else @offsetOf(T, field.name),
-                            .bit_count = @bitSizeOf(field.type),
+                            .bit_count = if (is_packed) @bitSizeOf(field.type) else 0,
                             .has_undefined_value = has_undefined_value,
                             .handle = TypeErasedParser(field.type, s, p).handler,
                         } };
@@ -2682,7 +2716,7 @@ pub fn Parser(comptime format: types.Format, comptime options: Options) type {
                             if (dispatch.has_undefined_value) undefined_count_runtime -= 1;
                         }
                         if (is_packed) {
-                            var packed_field_value: _std.meta.Int(.unsigned, @bitSizeOf(T)) = undefined;
+                            var packed_field_value: @Int(.unsigned, @bitSizeOf(T)) = undefined;
                             try dispatch.handle(@ptrCast(&packed_field_value), allocator, field.value);
                             _std.mem.writeVarPackedInt(_std.mem.asBytes(&dest), dispatch.offset, dispatch.bit_count, packed_field_value, builtin.cpu.arch.endian());
                         } else {
@@ -2703,10 +2737,10 @@ pub fn Parser(comptime format: types.Format, comptime options: Options) type {
                 handle: *const CustomParserHandler(anyopaque),
             };
 
-            inline fn makeFieldsSPTuple(comptime T: type, comptime R: schema.Struct(T), comptime fields: []const _std.builtin.Type.StructField) type {
+            inline fn makeFieldsSPTuple(comptime T: type, comptime R: schema.Struct(T), comptime fields: []const ReflectionField) type {
                 comptime var field_names: [fields.len][]const u8 = undefined;
                 comptime var field_types: [fields.len]type = undefined;
-                comptime var field_attrs: [fields.len]_std.builtin.Type.StructField.Attributes = undefined;
+                comptime var field_attrs: [fields.len]_std.lang.Type.Struct.FieldAttributes = undefined;
                 @setEvalBranchQuota(1000 * fields.len);
                 inline for (fields, 0..) |field, i| {
                     const field_schema = @field(R.fields, field.name);
@@ -2743,10 +2777,10 @@ pub fn Parser(comptime format: types.Format, comptime options: Options) type {
 
             fn EnumFields(comptime T: type) type {
                 assert(@typeInfo(T) == .@"enum");
-                const fields = _std.meta.fields(T);
+                const fields = comptime fieldsOf(T);
                 comptime var field_names: [fields.len][]const u8 = undefined;
                 comptime var field_types: [fields.len]type = undefined;
-                comptime var field_attrs: [fields.len]_std.builtin.Type.StructField.Attributes = undefined;
+                comptime var field_attrs: [fields.len]_std.lang.Type.Struct.FieldAttributes = undefined;
                 inline for (0..fields.len) |i| {
                     const field = fields[i];
                     const schema_field = EnumField;
@@ -2768,14 +2802,14 @@ pub fn Parser(comptime format: types.Format, comptime options: Options) type {
 
             fn parseEnum(comptime T: type, comptime S: schema.Enum(T), allocator: ?Allocator, value: Value) schema.Error!T {
                 _ = allocator;
-                if (@typeInfo(T).@"enum".fields.len == 0) @compileError("Unable to parse into empty enum '" ++ @typeName(T) ++ "'");
-                if (!@typeInfo(T).@"enum".is_exhaustive) @compileError("Unable to parse into non-exhaustive enum '" ++ @typeName(T) ++ "'");
+                if (@typeInfo(T).@"enum".field_names.len == 0) @compileError("Unable to parse into empty enum '" ++ @typeName(T) ++ "'");
+                if (@typeInfo(T).@"enum".mode != .exhaustive) @compileError("Unable to parse into non-exhaustive enum '" ++ @typeName(T) ++ "'");
                 const variant = try value.asRawString().getTemporal();
                 return parseEnumFromSlice(T, S, variant);
             }
 
             fn parseEnumFromSlice(comptime T: type, comptime S: schema.Enum(T), slice: []const u8) schema.Error!T {
-                const fields = _std.meta.fields(T);
+                const fields = comptime fieldsOf(T);
                 comptime var dispatches_mut: [fields.len]struct { []const u8, T } = undefined;
                 @setEvalBranchQuota(1000 * fields.len);
                 inline for (fields, 0..) |field, i| {
@@ -2807,10 +2841,10 @@ pub fn Parser(comptime format: types.Format, comptime options: Options) type {
 
             fn UnionFields(comptime T: type) type {
                 assert(@typeInfo(T) == .@"union");
-                const fields = _std.meta.fields(T);
+                const fields = comptime fieldsOf(T);
                 comptime var field_names: [fields.len][]const u8 = undefined;
                 comptime var field_types: [fields.len]type = undefined;
-                comptime var field_attrs: [fields.len]_std.builtin.Type.StructField.Attributes = undefined;
+                comptime var field_attrs: [fields.len]_std.lang.Type.Struct.FieldAttributes = undefined;
                 inline for (0..fields.len) |i| {
                     const field = fields[i];
                     const schema_field = UnionField(field.type);
@@ -2837,9 +2871,9 @@ pub fn Parser(comptime format: types.Format, comptime options: Options) type {
             }
 
             fn parseUnion(comptime T: type, comptime S: schema.Union(T), allocator: ?Allocator, value: Value) schema.Error!T {
-                if (@typeInfo(T).@"union".fields.len == 0) @compileError("Unable to parse into empty union '" ++ @typeName(T) ++ "'");
+                if (@typeInfo(T).@"union".field_names.len == 0) @compileError("Unable to parse into empty union '" ++ @typeName(T) ++ "'");
                 const string_index = value.iter.cursor.document.string_buffer.saveIndex();
-                const fields = _std.meta.fields(T);
+                const fields = comptime fieldsOf(T);
                 if (S.representation == .untagged) {
 
                     // workaround from https://github.com/ziglang/zig/issues/9524#issuecomment-895802551
@@ -2934,7 +2968,7 @@ pub fn Parser(comptime format: types.Format, comptime options: Options) type {
             fn TaggedReprParser(
                 comptime T: type,
                 comptime repr: UnionRepresentation,
-                comptime F: _std.builtin.Type.UnionField,
+                comptime F: ReflectionField,
                 comptime G: ?schema.Infer(F.type),
             ) type {
                 return struct {
@@ -2972,7 +3006,7 @@ pub fn Parser(comptime format: types.Format, comptime options: Options) type {
                     }
 
                     pub fn parseTypeErased(dest: *anyopaque, allocator: ?Allocator, value: Value) schema.Error!void {
-                        const typed_dest: *T = @alignCast(@ptrCast(dest));
+                        const typed_dest: *T = @ptrCast(@alignCast(dest));
                         typed_dest.* = try @This().parse(allocator, value);
                     }
                 };
@@ -3342,11 +3376,11 @@ fn undefinedInit(comptime T: type) T {
     const info = @typeInfo(T);
     if (info != .@"struct") return undefined;
     comptime var result: T = undefined;
-    inline for (std.meta.fields(T)) |field| {
+    inline for (comptime fieldsOf(T)) |field| {
         switch (@typeInfo(field.type)) {
             .optional => {
                 if (field.default_value_ptr) |default_value_ptr| {
-                    const default_value: *field.type = @constCast(@alignCast(@ptrCast(
+                    const default_value: *field.type = @ptrCast(@alignCast(@constCast(
                         default_value_ptr,
                     )));
                     @field(result, field.name) = default_value.*;
@@ -3355,7 +3389,7 @@ fn undefinedInit(comptime T: type) T {
                 }
             },
             else => {
-                const default_value: *field.type = @constCast(@alignCast(@ptrCast(
+                const default_value: *field.type = @ptrCast(@alignCast(@constCast(
                     field.default_value_ptr orelse continue,
                 )));
                 @field(result, field.name) = default_value.*;
@@ -3401,7 +3435,7 @@ const StandardDataStructure = union(enum) {
                         if (T == std.ArrayListUnmanaged(child))
                             return .{ .array_list = .{child} };
                         // Convert integer alignment to ?std.mem.Alignment enum
-                        const alignment: ?std.mem.Alignment = @enumFromInt(@ctz(@as(usize, info.alignment)));
+                        const alignment: ?std.mem.Alignment = if (info.attrs.@"align") |a| @fromBackingInt(@intCast(@ctz(a))) else null;
                         if (T == std.ArrayListAlignedUnmanaged(child, alignment))
                             return .{ .array_list_aligned = .{ child, alignment } };
                     }
