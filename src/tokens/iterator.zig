@@ -47,7 +47,7 @@ pub fn Iterator(comptime options: Options) type {
         }
 
         pub fn ensureTotalCapacity(self: *Self, allocator: Allocator, capacity: usize) !void {
-            try self.indexes.ensureTotalCapacity(allocator, capacity + 1); // + 1 because of the bogus index
+            try self.indexes.ensureTotalCapacity(allocator, capacity + 2); // + 2 because of the two bogus indexes
         }
 
         pub inline fn position(self: Self) usize {
@@ -87,6 +87,10 @@ pub fn Iterator(comptime options: Options) type {
 
             const ixs = self.indexes.items;
             self.indexes.appendAssumeCapacity(@intCast(document.len)); // bogus index at document.len
+            // A second bogus index, as in simdjson (simdjson#906): a read that
+            // consumes the first one stops on the second instead of reading
+            // past the array.
+            self.indexes.appendAssumeCapacity(@intCast(document.len));
             self.token = self.indexes.items.ptr;
             if (!options.assume_padding) {
                 const padding_bound = document.len -| Vector.bytes_len;
