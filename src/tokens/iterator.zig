@@ -47,7 +47,15 @@ pub fn Iterator(comptime options: Options) type {
         }
 
         pub fn ensureTotalCapacity(self: *Self, allocator: Allocator, capacity: usize) !void {
-            try self.indexes.ensureTotalCapacity(allocator, capacity + 2); // + 2 because of the two bogus indexes
+            // A document of `capacity` bytes has at most `capacity` tokens.
+            // The two bogus indexes need 2 more entries. For a 64-byte mask
+            // with 24 tokens or fewer, `Indexer.extract` writes indexes in
+            // groups of 4, so it can write up to 3 entries past the last
+            // token. The bogus indexes overwrite the first 2 of those, so 3
+            // extra entries cover both.
+            // A reused buffer can have exactly this capacity, so the request
+            // must include the slack.
+            try self.indexes.ensureTotalCapacity(allocator, capacity + 3);
         }
 
         pub inline fn position(self: Self) usize {
