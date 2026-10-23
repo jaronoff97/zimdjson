@@ -485,6 +485,14 @@ pub fn Parser(comptime format: types.Format, comptime options: Options) type {
                                 if (self.depth <= parent_depth) return;
                             }
                         },
+                        // The bogus token at the end of the document is not a
+                        // value: the document ends inside a container (e.g.
+                        // `{"a":`). Consumed as a scalar by `else`, it lets the
+                        // next read go past the token array.
+                        ' ' => {
+                            @branchHint(.unlikely);
+                            return self.reportError(incompleteError(parent_char));
+                        },
                         else => {
                             try Logger.log(self.document, ptr, "skip  ", self.depth);
                             self.depth -= 1;
@@ -514,11 +522,15 @@ pub fn Parser(comptime format: types.Format, comptime options: Options) type {
                         },
                     }
                 }
-                return self.reportError(switch (parent_char) {
+                return self.reportError(incompleteError(parent_char));
+            }
+
+            inline fn incompleteError(parent_char: u8) Error {
+                return switch (parent_char) {
                     '{' => error.IncompleteObject,
                     '[' => error.IncompleteArray,
                     else => error.TrailingContent,
-                });
+                };
             }
 
             inline fn reportError(self: *Cursor, err: Error) Error!void {
@@ -1366,6 +1378,9 @@ pub fn Parser(comptime format: types.Format, comptime options: Options) type {
 
             /// Cast the value to any JSON value.
             pub fn asAny(self: Value) Error!AnyValue {
+                // Like every other cast: an errored value (e.g. a failed `at`)
+                // must not peek the cursor, which may sit past the document.
+                if (self.err) |err| return err;
                 return switch (self.iter.cursor.peekChar()) {
                     't', 'f' => .{ .bool = try self.asBool() },
                     'n' => .{ .null = brk: {
