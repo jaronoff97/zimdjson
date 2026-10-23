@@ -214,6 +214,36 @@ pub fn build(b: *std.Build) !void {
                 ring_buffer_step.dependOn(&run_ring_buffer.step);
                 tests.dependOn(ring_buffer_step);
             }
+            {
+                const truncated_input_step = b.step("tests/truncated-input", "Run test suite 'truncated input'");
+                const truncated_input = b.addTest(.{
+                    .root_module = b.createModule(.{
+                        .root_source_file = b.path("tests/truncated_input.zig"),
+                        .target = target,
+                        .optimize = optimize,
+                    }),
+                });
+                truncated_input.root_module.addImport("zimdjson", zimdjson);
+
+                const run_truncated_input = b.addRunArtifact(truncated_input);
+                truncated_input_step.dependOn(&run_truncated_input.step);
+                tests.dependOn(truncated_input_step);
+            }
+            {
+                const token_buffer_step = b.step("tests/token-buffer", "Run test suite 'token buffer'");
+                const token_buffer = b.addTest(.{
+                    .root_module = b.createModule(.{
+                        .root_source_file = b.path("tests/token_buffer.zig"),
+                        .target = target,
+                        .optimize = optimize,
+                    }),
+                });
+                token_buffer.root_module.addImport("zimdjson", zimdjson);
+
+                const run_token_buffer = b.addRunArtifact(token_buffer);
+                token_buffer_step.dependOn(&run_token_buffer.step);
+                tests.dependOn(token_buffer_step);
+            }
         }
         // --
 
